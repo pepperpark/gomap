@@ -1,0 +1,41 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# Project build outputs
+/gomap
+/bin/
+/build/
+/dist/
+/out/
+/target/
+
+# Runtime/state/log files
+/gomap-state.json
+*.state.json
+*.log
+*.cache
+*.tmp
+*.bak
+
+# Editors/OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local environment files
+.env
+.env.*
+!.env.example
