@@ -25,14 +25,8 @@ go build -o gomap ./cmd/gomap
 
 ### Releases
 
-Tagged builds are published via GoReleaser for Linux, macOS, and Windows (amd64/arm64). Push a tag like `v1.2.3` to trigger the GitHub Action:
-
-```
-git tag v1.2.3
-git push origin v1.2.3
-```
-
-Artifacts (zips/tarballs) and checksums are attached to the GitHub Release.
+Tagged builds are published via GoReleaser for Linux, macOS, and Windows (amd64/arm64).
+Artifacts and checksums are attached to the GitHub Release.
 
 ## Usage
 

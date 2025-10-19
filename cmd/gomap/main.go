@@ -11,6 +11,7 @@ import (
 	"time"
 
 	flag "github.com/spf13/pflag"
+    "golang.org/x/term"
 
 	"github.com/yourname/gomap/internal/imaputil"
 	"github.com/yourname/gomap/internal/state"
@@ -32,15 +33,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
-	var (
+    var (
 		srcHost     string
 		srcUser     string
 		srcPass     string
 		srcPort     int
+		srcPassPrompt bool
 		dstHost     string
 		dstUser     string
 		dstPass     string
 		dstPort     int
+		dstPassPrompt bool
 		insecure    bool
 		startTLS    bool
 		include     string
@@ -63,11 +66,13 @@ func main() {
 	flag.IntVar(&srcPort, "src-port", 993, "Source IMAP port")
 	flag.StringVar(&srcUser, "src-user", "", "Source IMAP username")
 	flag.StringVar(&srcPass, "src-pass", "", "Source IMAP password")
+	flag.BoolVar(&srcPassPrompt, "src-pass-prompt", false, "Prompt for source IMAP password (no echo)")
 
 	flag.StringVar(&dstHost, "dst-host", "", "Destination IMAP host")
 	flag.IntVar(&dstPort, "dst-port", 993, "Destination IMAP port")
 	flag.StringVar(&dstUser, "dst-user", "", "Destination IMAP username")
 	flag.StringVar(&dstPass, "dst-pass", "", "Destination IMAP password")
+	flag.BoolVar(&dstPassPrompt, "dst-pass-prompt", false, "Prompt for destination IMAP password (no echo)")
 
 	flag.BoolVar(&insecure, "insecure", false, "Skip TLS verification")
 	flag.BoolVar(&startTLS, "starttls", false, "Use STARTTLS instead of implicit TLS")
@@ -111,8 +116,27 @@ func main() {
 		os.Exit(2)
 	}
 
-	// passwords must be provided via flags
+	// Prompt for passwords if requested and not provided
+	if srcPassPrompt && srcPass == "" {
+		fmt.Fprint(os.Stderr, "Source password: ")
+		b, perr := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if perr != nil {
+			log.Fatalf("read source password: %v", perr)
+		}
+		srcPass = string(b)
+	}
+	if dstPassPrompt && dstPass == "" {
+		fmt.Fprint(os.Stderr, "Destination password: ")
+		b, perr := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if perr != nil {
+			log.Fatalf("read destination password: %v", perr)
+		}
+		dstPass = string(b)
+	}
 
+	// passwords must be provided via flags or prompts
 	if srcHost == "" || srcUser == "" || srcPass == "" || dstHost == "" || dstUser == "" || dstPass == "" {
 		fmt.Fprintln(os.Stderr, "Error: missing required flags: --src-host, --src-user, --src-pass, --dst-host, --dst-user, --dst-pass")
 		flag.Usage()
