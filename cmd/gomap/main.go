@@ -11,7 +11,7 @@ import (
 	"time"
 
 	flag "github.com/spf13/pflag"
-    "golang.org/x/term"
+	"golang.org/x/term"
 
 	"github.com/yourname/gomap/internal/imaputil"
 	"github.com/yourname/gomap/internal/state"
@@ -33,33 +33,33 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
-    var (
-		srcHost     string
-		srcUser     string
-		srcPass     string
-		srcPort     int
+	var (
+		srcHost       string
+		srcUser       string
+		srcPass       string
+		srcPort       int
 		srcPassPrompt bool
-		dstHost     string
-		dstUser     string
-		dstPass     string
-		dstPort     int
+		dstHost       string
+		dstUser       string
+		dstPass       string
+		dstPort       int
 		dstPassPrompt bool
-		insecure    bool
-		startTLS    bool
-		include     string
-		exclude     string
-		since       string
-		dryRun      bool
-		concurrency int
-		stateFile   string
-		ignoreState bool
-		skipSpecial bool
-		skipTrash   bool
-		skipJunk    bool
-		skipDrafts  bool
-		skipSent    bool
-		mapPairs    []string
-		verbose     bool
+		insecure      bool
+		startTLS      bool
+		include       string
+		exclude       string
+		since         string
+		dryRun        bool
+		concurrency   int
+		stateFile     string
+		ignoreState   bool
+		skipSpecial   bool
+		skipTrash     bool
+		skipJunk      bool
+		skipDrafts    bool
+		skipSent      bool
+		mapPairs      []string
+		verbose       bool
 	)
 
 	flag.StringVar(&srcHost, "src-host", "", "Source IMAP host")

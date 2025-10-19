@@ -57,10 +57,21 @@ Passwords are provided via CLI flags only. Note: they can appear in the process 
   --since 2024-01-01 --concurrency 3 --state-file state.json
 ```
 
+You can also prompt for passwords (no echo):
+
+```
+./gomap \
+  --src-host imap.source.example --src-user user@source.example --src-pass-prompt \
+  --dst-host imap.dest.example   --dst-user user@dest.example   --dst-pass-prompt \
+  --include '^(INBOX|Archive.*)$' --exclude '^Trash|^Spam' \
+  --since 2024-01-01 --concurrency 3 --state-file state.json
+```
+
 Options:
 
 - `--src-host`, `--src-port`, `--src-user`, `--src-pass`
 - `--dst-host`, `--dst-port`, `--dst-user`, `--dst-pass`
+  - or `--src-pass-prompt` / `--dst-pass-prompt` (prompt without echo)
 - `--insecure` (disable TLS verify), `--starttls` (explicit STARTTLS)
 - `--include`, `--exclude` (regex)
 - `--since YYYY-MM-DD`
@@ -85,8 +96,7 @@ Behavior notes:
 
 Security:
 
-- CLI passwords can show up in `ps` or shell history. If preferred, you can use interactive prompts (`--src-pass-prompt`/`--dst-pass-prompt`).
-  Note: interactive password prompts are not implemented in this version; use flags only.
+- CLI passwords can show up in `ps` or shell history. Prefer `--src-pass-prompt`/`--dst-pass-prompt` on shared systems.
 
 ## License
 
