@@ -960,7 +960,6 @@ func countMboxMessages(r io.Reader) (int, error) {
 
 // parseMappings converts `src=dst` pairs into a map
 
-// parseMappings converts `src=dst` pairs into a map
 func parseMappings(pairs []string) map[string]string {
 	m := make(map[string]string)
 	for _, p := range pairs {
