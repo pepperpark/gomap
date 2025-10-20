@@ -26,7 +26,7 @@ archives:
       - gomap
     format: binary
     name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if eq .Os "windows" }}.exe{{ end }}
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
 checksum:
   name_template: "checksums.txt"
