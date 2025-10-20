@@ -1,3 +1,4 @@
+version: 2
 project_name: gomap
 
 before:
@@ -18,13 +19,14 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.version={{ trimPrefix "v" .Version }} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{ trimprefix .Version "v" }} -X main.commit={{ .FullCommit }} -X main.date={{ .Date }}
 
 archives:
   - id: binaries
-    builds:
+    ids:
       - gomap
-    format: binary
+    formats:
+      - binary
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
