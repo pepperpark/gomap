@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gomap — IMAP copy and utilities</title>
+    <meta name="description" content="gomap is a tiny CLI to copy and receive emails via IMAP or MBOX. Developer-friendly, fast, and scriptable." />
+    <meta property="og:title" content="gomap — IMAP copy and utilities" />
+    <meta property="og:description" content="Copy email between IMAP servers, import MBOX, and download mail locally. Binaries for Linux/macOS/Windows." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://github.com/pepperpark/gomap" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='16' fill='%230a84ff'/%3E%3Cpath d='M20 55 L45 30 L55 40 L80 15' stroke='white' stroke-width='8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='55' cy='40' r='6' fill='white'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="container nav">
+        <a class="brand" href="#top" aria-label="gomap">
+          <img src="./logo.svg" alt="gomap" width="28" height="28" />
+          <span>gomap</span>
+        </a>
+        <button id="themeToggle" class="btn btn-ghost" aria-label="Toggle dark mode">🌗</button>
+        <a class="btn btn-ghost" href="https://github.com/pepperpark/gomap" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="btn btn-primary" href="https://github.com/pepperpark/gomap/releases/latest" target="_blank" rel="noreferrer">Download</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero container">
+        <h1>IMAP copy and utilities</h1>
+        <p class="lead">Copy mailboxes between IMAP servers, import from MBOX, or download mail locally. Simple, fast CLI built with Go.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#install">Get Started</a>
+          <a class="btn btn-ghost" href="https://github.com/pepperpark/gomap" target="_blank" rel="noreferrer">View on GitHub</a>
+        </div>
+        <div class="badges">
+          <a href="https://github.com/pepperpark/gomap/releases/latest" target="_blank" rel="noreferrer" class="badge">Latest release ↗</a>
+          <span class="badge subtle">Linux • macOS • Windows</span>
+        </div>
+      </section>
+
+      <section class="container features" id="features">
+        <div class="feat">
+          <h3>IMAP ➜ IMAP</h3>
+          <p>Copy messages across servers with filtering, concurrency and resume state.</p>
+        </div>
+        <div class="feat">
+          <h3>MBOX import</h3>
+          <p>Import from local <code>mbox</code> files into any destination mailbox.</p>
+        </div>
+        <div class="feat">
+          <h3>Receive locally</h3>
+          <p>Download mailboxes to files or an <code>mbox</code> per folder, ideal for backups.</p>
+        </div>
+        <div class="feat">
+          <h3>Developer‑friendly</h3>
+          <p>Predictable flags, quiet by default, verbose when needed. Easy to script.</p>
+        </div>
+        <div class="feat">
+          <h3>Safe by default</h3>
+          <p>StartTLS/implicit TLS, password prompts, and an explicit <code>--dry-run</code>.</p>
+        </div>
+        <div class="feat">
+          <h3>Cross‑platform</h3>
+          <p>Single static binary for amd64/arm64 on Linux, macOS and Windows.</p>
+        </div>
+      </section>
+
+      <section class="container" id="install">
+        <h2>Install</h2>
+        <div class="cards">
+          <div class="card">
+            <h3>Prebuilt binaries</h3>
+            <p>Download from GitHub Releases.</p>
+            <p><a class="link" href="https://github.com/pepperpark/gomap/releases/latest" target="_blank" rel="noreferrer">Releases page ↗</a></p>
+          </div>
+          <div class="card">
+            <h3>Build from source</h3>
+            <p>Clone and build a static binary:</p>
+            <pre class="code"><code>git clone https://github.com/pepperpark/gomap
+cd gomap
+make build   # or: go build -o gomap ./cmd/gomap</code><button class="copy" title="Copy" aria-label="Copy to clipboard">Copy</button></pre>
+          </div>
+        </div>
+        <p class="note">Note: direct <code>go install</code> may depend on the module path; prefer releases or building in the cloned repo.</p>
+      </section>
+
+      <section class="container" id="usage">
+        <h2>Usage</h2>
+        <div class="grid-2">
+          <div>
+            <h3>Copy IMAP ➜ IMAP</h3>
+            <pre class="code"><code>gomap copy \ 
+  --src-host imap.source.example --src-user alice --src-pass-prompt 
+  --dst-host imap.dest.example   --dst-user alice --dst-pass-prompt 
+  --include 'INBOX|Work' --since 2024-01-01 
+  --concurrency 4 --skip-special</code><button class="copy" title="Copy">Copy</button></pre>
+            <ul class="bullets">
+              <li><code>--include/--exclude</code> accept regex.</li>
+              <li><code>--skip-special</code> filters Trash/Junk/Drafts/Sent (see flags for fine control).</li>
+              <li><code>--state-file</code> enables resumable runs.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Import from MBOX</h3>
+            <pre class="code"><code>gomap copy \ 
+  --mbox /path/to/mail.mbox --dst-mailbox INBOX \ 
+  --dst-host imap.dest.example --dst-user alice --dst-pass-prompt</code><button class="copy" title="Copy">Copy</button></pre>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div>
+            <h3>Receive to local folder</h3>
+            <pre class="code"><code>gomap receive \ 
+  --src-host imap.example --src-user alice --src-pass-prompt \ 
+  --output-dir ./gomap-download --format mbox --since 2024-01-01</code><button class="copy" title="Copy">Copy</button></pre>
+          </div>
+          <div>
+            <h3>Version info</h3>
+            <pre class="code"><code>gomap --version</code><button class="copy" title="Copy">Copy</button></pre>
+          </div>
+        </div>
+        <p>For all options, run <code>gomap help</code> or <code>gomap &lt;command&gt; --help</code>.</p>
+      </section>
+
+      <section class="container" id="why">
+        <h2>Why gomap?</h2>
+        <ul class="bullets">
+          <li>Zero-config: only flags you actually need.</li>
+          <li>Streams messages; good performance even with large accounts.</li>
+          <li>Small static binary — easy to ship in CI and cron jobs.</li>
+        </ul>
+      </section>
+
+      <section class="container card highlight" id="links">
+        <h2>Links</h2>
+        <ul>
+          <li><a class="link" href="https://github.com/pepperpark/gomap">Repository</a></li>
+          <li><a class="link" href="https://github.com/pepperpark/gomap/releases">Releases</a></li>
+          <li><a class="link" href="https://github.com/pepperpark/gomap/issues">Issues</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p>© <span id="year"></span> gomap. Built with Go. <a class="link" href="https://github.com/pepperpark/gomap">GitHub</a></p>
+      </div>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+  </html>
