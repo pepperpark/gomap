@@ -96,6 +96,71 @@ Behavior notes:
   (UI is quiet by default: single overall progress bar, no per-mail logging)
 - `--verbose` (print detailed per-mailbox logs)
 
+### Receive (IMAP → filesystem)
+
+Download messages from a source IMAP account into the local filesystem. Two formats are supported:
+
+- single-file: one .eml file per message under outputDir/<mailbox>/UID.eml (safe to resume; existing files are skipped)
+- mbox: one mbox file per mailbox at outputDir/<mailbox>.mbox (appends messages)
+
+Examples:
+
+```
+# Single-file mode (default)
+./gomap receive \
+  --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
+  --include '^(INBOX|Archive.*)$' --since 2024-01-01 \
+  --output-dir backup
+
+# Mbox mode
+./gomap receive \
+  --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
+  --format mbox \
+  --output-dir backup
+```
+
+Flags (receive):
+
+- `--src-host`, `--src-port`, `--src-user`, `--src-pass` (or `--src-pass-prompt`)
+- `--insecure`, `--starttls`
+- `--include`, `--exclude` (regex), `--since YYYY-MM-DD` (defaults to epoch)
+- `--skip-special`/`--skip-trash`/`--skip-junk`/`--skip-drafts`/`--skip-sent`
+- `--output-dir` (default `gomap-download`)
+- `--format` single-file|mbox (default single-file)
+- `--verbose`
+
+Behavior:
+
+- Single-file mode resumes by skipping existing files (UID.eml). Re-running is idempotent.
+- Mbox mode appends raw messages; re-running may duplicate messages unless filtered with `--since` or external dedupe is used.
+
+### Send (SMTP)
+
+Send a message via SMTP (STARTTLS or implicit TLS).
+
+Examples:
+
+```
+# Build message from fields
+./gomap send \
+  --smtp-host smtp.example --smtp-port 587 --smtp-user user@example --smtp-pass 'app-pass' \
+  --from user@example --to rcpt1@example --to rcpt2@example \
+  --subject "Hello" --body "This is the body"
+
+# Send a raw RFC822 message from file
+./gomap send \
+  --smtp-host smtp.example --smtp-port 465 --ssl --smtp-user user@example --smtp-pass 'app-pass' \
+  --from user@example --to rcpt@example \
+  --raw-file message.eml
+```
+
+Flags (send):
+
+- `--smtp-host`, `--smtp-port`, `--smtp-user`, `--smtp-pass` (or `--smtp-pass-prompt`)
+- `--starttls` (default true), `--ssl` (implicit TLS), `--insecure`
+- `--from`, `--to` (repeatable)
+- Content options: `--subject`, `--body`, `--body-file`, or `--raw-file`
+
 ## Notes
 
 - UID gaps: the tool stores only the highest UID per folder. Deleted or skipped UIDs may not be retried. Robust resume would require tracking a UID set.
