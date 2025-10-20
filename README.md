@@ -66,6 +66,13 @@ MBOX → IMAP:
   --dst-mailbox Archive/2024
 ```
 
+Resume for MBOX imports:
+
+- The copy command stores a byte offset for each MBOX file and destination mailbox in the state file. Re-running continues from that offset (no re-reading of already appended messages).
+- Dry-run does not advance the offset.
+- Use `--ignore-state` or a fresh `--state-file` to restart from the beginning of the MBOX.
+- If the MBOX file changed (truncated/rotated) after a run, the stored offset may be invalid; restart with `--ignore-state` or a new state file.
+
 You can also prompt for passwords (no echo):
 
 ```
@@ -95,6 +102,8 @@ Behavior notes:
 - `--skip-special`/`--skip-trash`/`--skip-junk`/`--skip-drafts`/`--skip-sent`
   (UI is quiet by default: single overall progress bar, no per-mail logging)
 - `--verbose` (print detailed per-mailbox logs)
+- Include/Exclude filters and skip-special options apply to IMAP source mode. When using `--mbox`, the filters are not used.
+- In MBOX → IMAP mode, the progress total reflects messages remaining from the current resume offset.
 
 ### Receive (IMAP → filesystem)
 
@@ -133,6 +142,7 @@ Behavior:
 
 - Single-file mode resumes by skipping existing files (UID.eml). Re-running is idempotent.
 - Mbox mode appends raw messages; re-running may duplicate messages unless filtered with `--since` or external dedupe is used.
+- Mailbox-to-path mapping: remote folder names become directories under `--output-dir` (single-file) or `.mbox` file names (mbox mode). Unsafe characters are sanitized to safe path segments.
 
 ### Send (SMTP)
 
@@ -161,6 +171,10 @@ Flags (send):
 - `--from`, `--to` (repeatable)
 - Content options: `--subject`, `--body`, `--body-file`, or `--raw-file`
 
+Security (SMTP):
+
+- CLI SMTP passwords have the same caveats as IMAP. Prefer `--smtp-pass-prompt` on shared systems.
+
 ## Notes
 
 - UID gaps: the tool stores only the highest UID per folder. Deleted or skipped UIDs may not be retried. Robust resume would require tracking a UID set.
@@ -171,6 +185,36 @@ Flags (send):
 Security:
 
 - CLI passwords can show up in `ps` or shell history. Prefer `--src-pass-prompt`/`--dst-pass-prompt` on shared systems.
+
+## State file format
+
+By default, state is saved to `gomap-state.json` (override with `--state-file`).
+
+Current keys:
+
+- `mail_max_uid`: highest copied UID per IMAP mailbox (used by IMAP → IMAP copy resume)
+- `mbox_offsets`: processed byte offsets for MBOX sources, keyed by `mbox:<abs-path>|dst:<Mailbox>` (used by MBOX → IMAP copy resume)
+
+Example:
+
+```
+{
+  "mail_max_uid": {
+    "INBOX": 12345,
+    "Archive/2024": 67890
+  },
+  "mbox_offsets": {
+    "mbox:/home/user/backup.mbox|dst:Archive/2024": 10485760
+  }
+}
+```
+
+Notes:
+
+- `mail_max_uid`: A message is considered for copy if it matches the date filter and its UID is greater than the stored value (unless `--ignore-state`).
+- `mbox_offsets`: Offset is in bytes from the start of the MBOX file. Re-runs continue from that position. Use `--ignore-state` or a fresh `--state-file` to start from the beginning.
+- If an MBOX file was truncated or rotated after a run, the stored offset may be invalid—restart with `--ignore-state` or delete the entry.
+- Receive command does not use the state file: single-file mode resumes by skipping existing `UID.eml`; receive mbox mode appends and may duplicate on re-runs unless you constrain with `--since`.
 
 ## License
 
