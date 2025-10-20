@@ -1,0 +1,70 @@
+<!--
+  Original vector mascot for the gomap project.
+  A gopher-inspired creature hugging an envelope (email/IMAP).
+  This artwork is original to this repository and not derived from the Go gopher.
+  License: CC0-1.0 (public domain). You can adapt it within this project.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="gomap mascot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a84ff"/>
+      <stop offset="100%" stop-color="#60a5fa"/>
+    </linearGradient>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#58b7f7"/>
+      <stop offset="100%" stop-color="#2f80ed"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- soft background blob -->
+  <g opacity="0.25">
+    <path d="M520,120 C600,200 560,360 420,400 C300,432 160,420 100,340 C40,260 80,160 170,120 C260,80 440,40 520,120 Z" fill="url(#bg)"/>
+  </g>
+
+  <!-- mascot body -->
+  <g filter="url(#shadow)">
+    <!-- body -->
+    <ellipse cx="320" cy="240" rx="140" ry="150" fill="url(#fur)"/>
+    <!-- tummy -->
+    <ellipse cx="320" cy="270" rx="95" ry="95" fill="#eef6ff"/>
+    <!-- ears -->
+    <circle cx="250" cy="120" r="28" fill="url(#fur)"/>
+    <circle cx="390" cy="120" r="28" fill="url(#fur)"/>
+    <!-- eyes -->
+    <circle cx="285" cy="190" r="16" fill="#0b1220"/>
+    <circle cx="355" cy="190" r="16" fill="#0b1220"/>
+    <circle cx="292" cy="186" r="6" fill="#fff" opacity="0.9"/>
+    <circle cx="362" cy="186" r="6" fill="#fff" opacity="0.9"/>
+    <!-- nose -->
+    <ellipse cx="320" cy="208" rx="12" ry="8" fill="#0b1220"/>
+    <!-- teeth (cartoon) -->
+    <rect x="306" y="218" width="12" height="14" rx="2" fill="#fff"/>
+    <rect x="322" y="218" width="12" height="14" rx="2" fill="#fff"/>
+
+    <!-- envelope held in front -->
+    <g transform="translate(240,240)">
+      <rect x="0" y="0" width="160" height="100" rx="10" fill="#ffffff" stroke="#0a84ff" stroke-width="4"/>
+      <path d="M8 6 L80 56 L152 6" fill="none" stroke="#0a84ff" stroke-width="4"/>
+      <path d="M8 94 L72 44" fill="none" stroke="#0a84ff" stroke-width="4"/>
+      <path d="M152 94 L88 44" fill="none" stroke="#0a84ff" stroke-width="4"/>
+      <!-- small IMAP glyph -->
+      <g transform="translate(120,68) scale(0.9)">
+        <rect x="-18" y="-12" width="36" height="24" rx="4" fill="#0a84ff"/>
+        <path d="M-12,-2 L0,8 L12,-2" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      </g>
+    </g>
+
+    <!-- arms over envelope -->
+    <path d="M210,270 C250,310 270,330 320,330 C370,330 390,310 430,270" fill="none" stroke="url(#fur)" stroke-width="26" stroke-linecap="round"/>
+
+    <!-- feet -->
+    <ellipse cx="270" cy="380" rx="26" ry="16" fill="#0b1220" opacity=".2"/>
+    <ellipse cx="370" cy="380" rx="26" ry="16" fill="#0b1220" opacity=".2"/>
+  </g>
+
+  <!-- title text (hidden for screen readers; visual accent) -->
+  <text x="320" y="70" text-anchor="middle" font-family="ui-sans-serif, system-ui" font-size="28" fill="#0b1220" opacity="0.25">gomap</text>
+</svg>
