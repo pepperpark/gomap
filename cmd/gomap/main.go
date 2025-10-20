@@ -824,13 +824,31 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 	}
 	defer f.Close()
 
-	// Count messages quickly (scan From lines)
+	// Load state to support resume by byte offset
+	st, err := state.Load(o.stateFile)
+	if err != nil {
+		return fmt.Errorf("load state: %w", err)
+	}
+
+	absPath, _ := filepath.Abs(o.mboxPath)
+	stateKey := fmt.Sprintf("mbox:%s|dst:%s", absPath, o.dstMbox)
+	var startOffset int64
+	if !o.ignoreState {
+		startOffset = st.GetMboxOffset(stateKey)
+	}
+	if startOffset > 0 {
+		if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
+			return fmt.Errorf("seek mbox to offset %d: %w", startOffset, err)
+		}
+	}
+
+	// Count remaining messages quickly from current position
 	total, err := countMboxMessages(f)
 	if err != nil {
 		return err
 	}
 	// reset file
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
+	if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
 		return err
 	}
 
@@ -855,8 +873,15 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 		defer close(errc)
 		r := mbox.NewReader(f)
 		for {
+			curPos, _ := f.Seek(0, io.SeekCurrent)
 			mr, err := r.NextMessage()
 			if err == io.EOF {
+				// reached end, save final offset
+				if !o.dryRun {
+					endPos, _ := f.Seek(0, io.SeekCurrent)
+					st.SetMboxOffset(stateKey, endPos)
+					_ = st.Save(o.stateFile)
+				}
 				errc <- nil
 				return
 			}
@@ -895,6 +920,15 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 					errc <- fmt.Errorf("append: %w", err)
 					return
 				}
+				// update state offset after successful append
+				endPos, _ := f.Seek(0, io.SeekCurrent)
+				// If NextMessage advanced file cursor from curPos to endPos, save endPos
+				// In rare cases of reader buffering, prefer endPos when larger
+				if endPos <= curPos {
+					endPos = curPos
+				}
+				st.SetMboxOffset(stateKey, endPos)
+				_ = st.Save(o.stateFile)
 			}
 			progress <- 1
 		}
