@@ -30,10 +30,10 @@ Artifacts and checksums are attached to the GitHub Release.
 
 ## Usage
 
-Example:
+Example (IMAP → IMAP):
 
 ```
-./gomap \
+./gomap copy \
   --src-host imap.source.example \
   --src-user user@source.example \
   --src-port 993 \
@@ -50,17 +50,26 @@ Example:
 Passwords are provided via CLI flags only. Note: they can appear in the process list or shell history; use on trusted systems.
 
 ```
-./gomap \
+./gomap copy \
   --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
   --dst-host imap.dest.example   --dst-user user@dest.example   --dst-pass 'app-password-dst' \
   --include '^(INBOX|Archive.*)$' --exclude '^Trash|^Spam' \
   --since 2024-01-01 --concurrency 3 --state-file state.json
 ```
 
+MBOX → IMAP:
+
+```
+./gomap copy \
+  --mbox ~/backup.mbox \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --dst-mailbox Archive/2024
+```
+
 You can also prompt for passwords (no echo):
 
 ```
-./gomap \
+./gomap copy \
   --src-host imap.source.example --src-user user@source.example --src-pass-prompt \
   --dst-host imap.dest.example   --dst-user user@dest.example   --dst-pass-prompt \
   --include '^(INBOX|Archive.*)$' --exclude '^Trash|^Spam' \
