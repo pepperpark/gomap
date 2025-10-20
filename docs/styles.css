@@ -11,9 +11,11 @@
 html,body{height:100%}
 main {padding: 0 20px 0 20px;}
 body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";background:var(--bg);color:var(--text);line-height:1.6}
-.container{max-width:1100px;margin:0 auto;margin-top: 20px;}
-.site-header{position:sticky;top:0;backdrop-filter:saturate(180%) blur(10px);background:color-mix(in oklab, var(--bg) 85%, transparent);border-bottom:1px solid color-mix(in oklab, var(--text) 10%, transparent);z-index:20}
-.nav{display:flex;gap:.75rem;align-items:center;justify-content:space-between;min-height:64px;flex-wrap:wrap}
+.container{max-width:1100px;margin:0 auto;}
+.site-header + * .container:first-child{padding-top:12px}
+.site-header{position:sticky;top:0;backdrop-filter:saturate(180%) blur(10px);background:color-mix(in oklab, var(--bg) 94%, transparent);border-bottom:1px solid color-mix(in oklab, var(--text) 10%, transparent);z-index:9999;box-shadow:0 1px 0 color-mix(in oklab, var(--text) 6%, transparent)}
+.nav{display:flex;gap:.75rem;align-items:center;min-height:64px;flex-wrap:wrap}
+.nav-actions{display:flex;gap:.75rem;margin-left:auto}
 .brand{display:flex;gap:.6rem;align-items:center;color:var(--text);text-decoration:none;font-weight:700}
 .brand span{font-size:1.05rem}
 .brand span{letter-spacing:.2px}
@@ -58,6 +60,8 @@ section h2{font-size:clamp(1.6rem,3.5vw,2rem)}
 @media (max-width: 960px){
   .hero-grid{grid-template-columns:1fr;gap:1rem}
   .hero-art{order:-1}
+  /* Keep actions inline and left-aligned; do not force new line */
+  .nav-actions{width:auto;justify-content:flex-start;margin-left:0}
 }
 @media (max-width: 720px){
   .cta{margin-top:.9rem}
