@@ -1,5 +1,7 @@
 # Gomap
 
+![Gomap mascot](./docs/mascot.svg)
+
 A small Go CLI to copy IMAP mailboxes and messages from a source account to a destination account.
 
 Note: Test with non-production accounts first. Use at your own risk.

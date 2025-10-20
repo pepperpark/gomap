@@ -64,7 +64,4 @@
     <ellipse cx="270" cy="380" rx="26" ry="16" fill="#0b1220" opacity=".2"/>
     <ellipse cx="370" cy="380" rx="26" ry="16" fill="#0b1220" opacity=".2"/>
   </g>
-
-  <!-- title text (hidden for screen readers; visual accent) -->
-  <text x="320" y="70" text-anchor="middle" font-family="ui-sans-serif, system-ui" font-size="28" fill="#0b1220" opacity="0.25">gomap</text>
 </svg>
