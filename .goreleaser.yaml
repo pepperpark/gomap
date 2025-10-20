@@ -25,7 +25,8 @@ archives:
   - id: binaries
     ids:
       - gomap
-    formats: binary
+    formats:
+      - binary
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
