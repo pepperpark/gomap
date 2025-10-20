@@ -13,10 +13,13 @@ import (
 type State struct {
 	mu      sync.Mutex
 	MailMax map[string]uint32 `json:"mail_max_uid"`
+	// MboxOffsets stores processed byte offsets for MBOX sources keyed by
+	// a composite identifier (e.g., "mbox:/abs/path|dst:MailboxName").
+	MboxOffsets map[string]int64 `json:"mbox_offsets"`
 }
 
 func Load(path string) (*State, error) {
-	st := &State{MailMax: make(map[string]uint32)}
+	st := &State{MailMax: make(map[string]uint32), MboxOffsets: make(map[string]int64)}
 	if path == "" {
 		return st, nil
 	}
@@ -58,4 +61,20 @@ func (s *State) SetMaxUID(mailbox string, uid uint32) {
 	if cur, ok := s.MailMax[mailbox]; !ok || uid > cur {
 		s.MailMax[mailbox] = uid
 	}
+}
+
+// MBOX helpers
+func (s *State) GetMboxOffset(key string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.MboxOffsets[key]
+}
+
+func (s *State) SetMboxOffset(key string, off int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.MboxOffsets == nil {
+		s.MboxOffsets = make(map[string]int64)
+	}
+	s.MboxOffsets[key] = off
 }

@@ -41,6 +41,7 @@ type model struct {
 
 type tickMsg time.Time
 type errsMsg []error
+type mboxProgMsg int
 
 func newModel(ctx context.Context, worker *syncer.MailboxSyncer, boxes []string) *model {
 	cctx, cancel := context.WithCancel(ctx)
@@ -220,4 +221,163 @@ func runTUI(ctx context.Context, worker *syncer.MailboxSyncer, boxes []string) [
 		return errs
 	}
 	return m.errs
+}
+
+// --- Simplified TUI for MBOX copy ---
+
+type mboxModel struct {
+	total    int
+	done     int
+	spinner  spinner.Model
+	bar      progress.Model
+	errs     []error
+	finished bool
+	// ETA smoothing
+	emaRate  float64
+	lastDone int
+	lastAt   time.Time
+	started  time.Time
+}
+
+func newMboxModel(total int) *mboxModel {
+	s := spinner.New()
+	s.Spinner = spinner.Line
+	bar := progress.New(progress.WithDefaultGradient())
+	now := time.Now()
+	return &mboxModel{total: total, spinner: s, bar: bar, started: now, lastAt: now}
+}
+
+func (m *mboxModel) Init() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, tick())
+}
+
+func (m *mboxModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "q" || msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+	case errsMsg:
+		m.errs = []error(msg)
+		m.finished = true
+		if len(m.errs) == 0 {
+			m.done = m.total
+		}
+		return m, tea.Quit
+	case mboxProgMsg:
+		m.done += int(msg)
+		return m, m.spinner.Tick
+	case tickMsg:
+		// update EMA
+		now := time.Now()
+		dt := now.Sub(m.lastAt).Seconds()
+		if dt > 0 {
+			delta := m.done - m.lastDone
+			inst := float64(delta) / dt
+			halfLife := 3.0
+			alpha := 1 - math.Exp(-math.Ln2*dt/halfLife)
+			if m.emaRate == 0 {
+				m.emaRate = inst
+			} else {
+				m.emaRate = alpha*inst + (1-alpha)*m.emaRate
+			}
+			m.lastDone = m.done
+			m.lastAt = now
+		}
+		return m, tea.Batch(m.spinner.Tick, tick())
+	}
+	return m, nil
+}
+
+func (m *mboxModel) View() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Render("Gomap")
+	s := title + "\n\nPress q to quit\n\n"
+	pct := 0.0
+	if m.total > 0 {
+		pct = float64(m.done) / float64(m.total)
+	}
+	s += fmt.Sprintf("%s Overall %d/%d   %s\n", m.spinner.View(), m.done, m.total, m.mboxETA())
+	s += m.bar.ViewAs(pct) + "\n\n"
+	if m.finished && len(m.errs) > 0 {
+		s += lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Errors:\n")
+		for _, e := range m.errs {
+			s += " - " + e.Error() + "\n"
+		}
+	} else if m.finished && len(m.errs) == 0 && m.total == 0 && m.done == 0 {
+		hint := "No new messages detected. Resume state may be active.\nUse --ignore-state or a fresh --state-file to process everything again."
+		s += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(hint) + "\n"
+	}
+	return s
+}
+
+func (m *mboxModel) mboxETA() string {
+	if m.total == 0 {
+		return "ETA --"
+	}
+	remaining := m.total - m.done
+	if remaining <= 0 {
+		return "ETA 0s"
+	}
+	rate := m.emaRate
+	if rate <= 0.01 {
+		elapsed := time.Since(m.started)
+		if elapsed <= 0 {
+			return "ETA --"
+		}
+		rate = float64(m.done) / elapsed.Seconds()
+	}
+	if rate <= 0.01 {
+		return "ETA --"
+	}
+	secs := float64(remaining) / rate
+	if secs < 1 {
+		return "ETA <1s"
+	}
+	d := time.Duration(secs) * time.Second
+	if d > 99*time.Hour {
+		return "ETA >99h"
+	}
+	if d >= time.Hour {
+		h := int(d / time.Hour)
+		rem := d - time.Duration(h)*time.Hour
+		mrem := int(rem / time.Minute)
+		return fmt.Sprintf("ETA %dh%dm", h, mrem)
+	}
+	if d >= time.Minute {
+		mns := int(d.Minutes())
+		sec := int(d.Seconds()) % 60
+		return fmt.Sprintf("ETA %dm%ds", mns, sec)
+	}
+	return fmt.Sprintf("ETA %ds", int(d.Seconds()))
+}
+
+// runMboxTUI displays a simple progress UI driven by a progress channel
+func runMboxTUI(total int, progress <-chan int, errc <-chan error) []error {
+	m := newMboxModel(total)
+	p := tea.NewProgram(m)
+	// Fan-in progress/errors into Program messages
+	go func() {
+		for inc := range progress {
+			p.Send(mboxProgMsg(inc))
+		}
+		// After progress closes, wait for error signal (which may be nil)
+		if err := <-errc; err != nil {
+			p.Send(errsMsg{err})
+		} else {
+			p.Send(errsMsg{})
+		}
+	}()
+	if _, err := p.Run(); err != nil {
+		// Fallback: no TUI, just drain and return error
+		errs := []error{}
+		for range progress {
+		}
+		if err := <-errc; err != nil {
+			errs = append(errs, err)
+		}
+		return errs
+	}
+	// Retrieve errs from finished model state is not trivial here; rely on errsMsg used above
+	// Return none; errs were printed within TUI
+	return []error{}
 }

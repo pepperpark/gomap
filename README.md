@@ -25,21 +25,15 @@ go build -o gomap ./cmd/gomap
 
 ### Releases
 
-Tagged builds are published via GoReleaser for Linux, macOS, and Windows (amd64/arm64). Push a tag like `v1.2.3` to trigger the GitHub Action:
-
-```
-git tag v1.2.3
-git push origin v1.2.3
-```
-
-Artifacts (zips/tarballs) and checksums are attached to the GitHub Release.
+Tagged builds are published via GoReleaser for Linux, macOS, and Windows (amd64/arm64).
+Artifacts and checksums are attached to the GitHub Release.
 
 ## Usage
 
-Example:
+Example (IMAP → IMAP):
 
 ```
-./gomap \
+./gomap copy \
   --src-host imap.source.example \
   --src-user user@source.example \
   --src-port 993 \
@@ -56,9 +50,35 @@ Example:
 Passwords are provided via CLI flags only. Note: they can appear in the process list or shell history; use on trusted systems.
 
 ```
-./gomap \
+./gomap copy \
   --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
   --dst-host imap.dest.example   --dst-user user@dest.example   --dst-pass 'app-password-dst' \
+  --include '^(INBOX|Archive.*)$' --exclude '^Trash|^Spam' \
+  --since 2024-01-01 --concurrency 3 --state-file state.json
+```
+
+MBOX → IMAP:
+
+```
+./gomap copy \
+  --mbox ~/backup.mbox \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --dst-mailbox Archive/2024
+```
+
+Resume for MBOX imports:
+
+- The copy command stores a byte offset for each MBOX file and destination mailbox in the state file. Re-running continues from that offset (no re-reading of already appended messages).
+- Dry-run does not advance the offset.
+- Use `--ignore-state` or a fresh `--state-file` to restart from the beginning of the MBOX.
+- If the MBOX file changed (truncated/rotated) after a run, the stored offset may be invalid; restart with `--ignore-state` or a new state file.
+
+You can also prompt for passwords (no echo):
+
+```
+./gomap copy \
+  --src-host imap.source.example --src-user user@source.example --src-pass-prompt \
+  --dst-host imap.dest.example   --dst-user user@dest.example   --dst-pass-prompt \
   --include '^(INBOX|Archive.*)$' --exclude '^Trash|^Spam' \
   --since 2024-01-01 --concurrency 3 --state-file state.json
 ```
@@ -67,6 +87,7 @@ Options:
 
 - `--src-host`, `--src-port`, `--src-user`, `--src-pass`
 - `--dst-host`, `--dst-port`, `--dst-user`, `--dst-pass`
+  - or `--src-pass-prompt` / `--dst-pass-prompt` (prompt without echo)
 - `--insecure` (disable TLS verify), `--starttls` (explicit STARTTLS)
 - `--include`, `--exclude` (regex)
 - `--since YYYY-MM-DD`
@@ -81,6 +102,78 @@ Behavior notes:
 - `--skip-special`/`--skip-trash`/`--skip-junk`/`--skip-drafts`/`--skip-sent`
   (UI is quiet by default: single overall progress bar, no per-mail logging)
 - `--verbose` (print detailed per-mailbox logs)
+- Include/Exclude filters and skip-special options apply to IMAP source mode. When using `--mbox`, the filters are not used.
+- In MBOX → IMAP mode, the progress total reflects messages remaining from the current resume offset.
+
+### Receive (IMAP → filesystem)
+
+Download messages from a source IMAP account into the local filesystem. Two formats are supported:
+
+- single-file: one .eml file per message under outputDir/<mailbox>/UID.eml (safe to resume; existing files are skipped)
+- mbox: one mbox file per mailbox at outputDir/<mailbox>.mbox (appends messages)
+
+Examples:
+
+```
+# Single-file mode (default)
+./gomap receive \
+  --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
+  --include '^(INBOX|Archive.*)$' --since 2024-01-01 \
+  --output-dir backup
+
+# Mbox mode
+./gomap receive \
+  --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
+  --format mbox \
+  --output-dir backup
+```
+
+Flags (receive):
+
+- `--src-host`, `--src-port`, `--src-user`, `--src-pass` (or `--src-pass-prompt`)
+- `--insecure`, `--starttls`
+- `--include`, `--exclude` (regex), `--since YYYY-MM-DD` (defaults to epoch)
+- `--skip-special`/`--skip-trash`/`--skip-junk`/`--skip-drafts`/`--skip-sent`
+- `--output-dir` (default `gomap-download`)
+- `--format` single-file|mbox (default single-file)
+- `--verbose`
+
+Behavior:
+
+- Single-file mode resumes by skipping existing files (UID.eml). Re-running is idempotent.
+- Mbox mode appends raw messages; re-running may duplicate messages unless filtered with `--since` or external dedupe is used.
+- Mailbox-to-path mapping: remote folder names become directories under `--output-dir` (single-file) or `.mbox` file names (mbox mode). Unsafe characters are sanitized to safe path segments.
+
+### Send (SMTP)
+
+Send a message via SMTP (STARTTLS or implicit TLS).
+
+Examples:
+
+```
+# Build message from fields
+./gomap send \
+  --smtp-host smtp.example --smtp-port 587 --smtp-user user@example --smtp-pass 'app-pass' \
+  --from user@example --to rcpt1@example --to rcpt2@example \
+  --subject "Hello" --body "This is the body"
+
+# Send a raw RFC822 message from file
+./gomap send \
+  --smtp-host smtp.example --smtp-port 465 --ssl --smtp-user user@example --smtp-pass 'app-pass' \
+  --from user@example --to rcpt@example \
+  --raw-file message.eml
+```
+
+Flags (send):
+
+- `--smtp-host`, `--smtp-port`, `--smtp-user`, `--smtp-pass` (or `--smtp-pass-prompt`)
+- `--starttls` (default true), `--ssl` (implicit TLS), `--insecure`
+- `--from`, `--to` (repeatable)
+- Content options: `--subject`, `--body`, `--body-file`, or `--raw-file`
+
+Security (SMTP):
+
+- CLI SMTP passwords have the same caveats as IMAP. Prefer `--smtp-pass-prompt` on shared systems.
 
 ## Notes
 
@@ -91,8 +184,37 @@ Behavior notes:
 
 Security:
 
-- CLI passwords can show up in `ps` or shell history. If preferred, you can use interactive prompts (`--src-pass-prompt`/`--dst-pass-prompt`).
-  Note: interactive password prompts are not implemented in this version; use flags only.
+- CLI passwords can show up in `ps` or shell history. Prefer `--src-pass-prompt`/`--dst-pass-prompt` on shared systems.
+
+## State file format
+
+By default, state is saved to `gomap-state.json` (override with `--state-file`).
+
+Current keys:
+
+- `mail_max_uid`: highest copied UID per IMAP mailbox (used by IMAP → IMAP copy resume)
+- `mbox_offsets`: processed byte offsets for MBOX sources, keyed by `mbox:<abs-path>|dst:<Mailbox>` (used by MBOX → IMAP copy resume)
+
+Example:
+
+```
+{
+  "mail_max_uid": {
+    "INBOX": 12345,
+    "Archive/2024": 67890
+  },
+  "mbox_offsets": {
+    "mbox:/home/user/backup.mbox|dst:Archive/2024": 10485760
+  }
+}
+```
+
+Notes:
+
+- `mail_max_uid`: A message is considered for copy if it matches the date filter and its UID is greater than the stored value (unless `--ignore-state`).
+- `mbox_offsets`: Offset is in bytes from the start of the MBOX file. Re-runs continue from that position. Use `--ignore-state` or a fresh `--state-file` to start from the beginning.
+- If an MBOX file was truncated or rotated after a run, the stored offset may be invalid—restart with `--ignore-state` or delete the entry.
+- Receive command does not use the state file: single-file mode resumes by skipping existing `UID.eml`; receive mbox mode appends and may duplicate on re-runs unless you constrain with `--since`.
 
 ## License
 
