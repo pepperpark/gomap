@@ -95,6 +95,46 @@ If you need to re-import only messages that had no parseable `Date:` (for exampl
 
 Note: `--mbox-only-missing-date` scans the whole file and ignores the resume offset so earlier messages without `Date:` aren't skipped.
 
+Fix wrongly dated “today” messages (MBOX import)
+
+If you imported from MBOX and some older emails appear with today’s date (no/invalid `Date:` header in source), you can fix them:
+
+1) Preview which messages would be deleted (dry-run):
+
+```
+./gomap delete \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --mailbox INBOX \
+  --start-date 2025-10-22 --end-date 2025-10-22 \
+  --dry-run
+```
+
+2) Delete and expunge those messages (you’ll get a TUI confirmation):
+
+```
+./gomap delete \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --mailbox INBOX \
+  --start-date 2025-10-22 --end-date 2025-10-22 \
+  --expunge true
+```
+
+3) Re-import only messages without a parseable `Date:` from the MBOX:
+
+```
+./gomap copy \
+  --mbox /path/to/mail.mbox \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --dst-mailbox INBOX \
+  --mbox-only-missing-date
+```
+
+Notes:
+
+- Adjust the date in step 1/2 to the day those messages received “today” as INTERNALDATE.
+- `--mbox-only-missing-date` ignores the resume offset to ensure earlier messages without a `Date:` are not skipped.
+- With the improved fallback (Resent-Date/Delivery-date/Received), re-imported messages should land at the correct position chronologically.
+
 You can also prompt for passwords (no echo):
 
 ```

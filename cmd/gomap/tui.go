@@ -384,6 +384,154 @@ func runMboxTUI(total int, progress <-chan int, errc <-chan error) []error {
 
 // --- Confirmation TUI ---
 
+// A simple count-based progress model for generic operations (e.g., mark-read)
+type countModel struct {
+	title    string
+	total    int
+	done     int
+	spinner  spinner.Model
+	bar      progress.Model
+	errs     []error
+	finished bool
+	// ETA smoothing
+	emaRate  float64
+	lastDone int
+	lastAt   time.Time
+	started  time.Time
+}
+
+func newCountModel(title string, total int) *countModel {
+	s := spinner.New()
+	s.Spinner = spinner.Line
+	bar := progress.New(progress.WithDefaultGradient())
+	now := time.Now()
+	return &countModel{title: title, total: total, spinner: s, bar: bar, started: now, lastAt: now}
+}
+
+func (m *countModel) Init() tea.Cmd { return tea.Batch(m.spinner.Tick, tick()) }
+
+func (m *countModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "q" || msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+	case errsMsg:
+		m.errs = []error(msg)
+		m.finished = true
+		if len(m.errs) == 0 {
+			m.done = m.total
+		}
+		return m, tea.Quit
+	case mboxProgMsg:
+		m.done += int(msg)
+		return m, m.spinner.Tick
+	case tickMsg:
+		now := time.Now()
+		dt := now.Sub(m.lastAt).Seconds()
+		if dt > 0 {
+			delta := m.done - m.lastDone
+			inst := float64(delta) / dt
+			halfLife := 3.0
+			alpha := 1 - math.Exp(-math.Ln2*dt/halfLife)
+			if m.emaRate == 0 {
+				m.emaRate = inst
+			} else {
+				m.emaRate = alpha*inst + (1-alpha)*m.emaRate
+			}
+			m.lastDone = m.done
+			m.lastAt = now
+		}
+		return m, tea.Batch(m.spinner.Tick, tick())
+	}
+	return m, nil
+}
+
+func (m *countModel) View() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Render("Gomap")
+	s := title + "\n\nPress q to quit\n\n"
+	pct := 0.0
+	if m.total > 0 {
+		pct = float64(m.done) / float64(m.total)
+	}
+	s += fmt.Sprintf("%s %s %d/%d   %s\n", m.spinner.View(), m.title, m.done, m.total, m.countETA())
+	s += m.bar.ViewAs(pct) + "\n\n"
+	if m.finished && len(m.errs) > 0 {
+		s += lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Errors:\n")
+		for _, e := range m.errs {
+			s += " - " + e.Error() + "\n"
+		}
+	}
+	return s
+}
+
+func (m *countModel) countETA() string {
+	if m.total == 0 {
+		return "ETA --"
+	}
+	remaining := m.total - m.done
+	if remaining <= 0 {
+		return "ETA 0s"
+	}
+	rate := m.emaRate
+	if rate <= 0.01 {
+		elapsed := time.Since(m.started)
+		if elapsed <= 0 {
+			return "ETA --"
+		}
+		rate = float64(m.done) / elapsed.Seconds()
+	}
+	if rate <= 0.01 {
+		return "ETA --"
+	}
+	secs := float64(remaining) / rate
+	if secs < 1 {
+		return "ETA <1s"
+	}
+	d := time.Duration(secs) * time.Second
+	if d > 99*time.Hour {
+		return "ETA >99h"
+	}
+	if d >= time.Hour {
+		h := int(d / time.Hour)
+		rem := d - time.Duration(h)*time.Hour
+		mrem := int(rem / time.Minute)
+		return fmt.Sprintf("ETA %dh%dm", h, mrem)
+	}
+	if d >= time.Minute {
+		mns := int(d.Minutes())
+		sec := int(d.Seconds()) % 60
+		return fmt.Sprintf("ETA %dm%ds", mns, sec)
+	}
+	return fmt.Sprintf("ETA %ds", int(d.Seconds()))
+}
+
+// runCountTUI displays a simple progress bar for count-based operations.
+func runCountTUI(total int, title string, progress <-chan int, errc <-chan error) []error {
+	m := newCountModel(title, total)
+	p := tea.NewProgram(m)
+	go func() {
+		for inc := range progress {
+			p.Send(mboxProgMsg(inc))
+		}
+		if err := <-errc; err != nil {
+			p.Send(errsMsg{err})
+		} else {
+			p.Send(errsMsg{})
+		}
+	}()
+	if _, err := p.Run(); err != nil {
+		errs := []error{}
+		for range progress {
+		}
+		if err := <-errc; err != nil {
+			errs = append(errs, err)
+		}
+		return errs
+	}
+	return []error{}
+}
+
 type confirmModel struct {
 	title   string
 	summary string

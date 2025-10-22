@@ -402,18 +402,30 @@ func runMarkRead(cmd *cobra.Command, args []string) error {
 		before = t.Add(24 * time.Hour)
 	}
 
+	// Pre-scan to compute total messages to update and cache per-mailbox sequences (for date-filtered cases)
+	type boxPlan struct {
+		name    string
+		all     bool
+		count   int
+		seqNums []uint32 // only set when date-filtered
+	}
+	plans := make([]boxPlan, 0, len(boxes))
+	total := 0
 	for _, box := range boxes {
-		if _, err := imaputil.SelectMailbox(dst, box, false); err != nil {
+		// read-only select to get message count cheaply
+		status, err := imaputil.SelectMailbox(dst, box, true)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "select %s: %v\n", box, err)
 			continue
 		}
-		var seq *imap.SeqSet
 		if since.IsZero() && before.IsZero() {
-			// all messages
-			seq = new(imap.SeqSet)
-			seq.AddRange(1, 0)
+			c := int(status.Messages)
+			if c == 0 {
+				continue
+			}
+			plans = append(plans, boxPlan{name: box, all: true, count: c})
+			total += c
 		} else {
-			// search by INTERNALDATE
 			criteria := imap.NewSearchCriteria()
 			if !since.IsZero() {
 				criteria.Since = since
@@ -429,17 +441,59 @@ func runMarkRead(cmd *cobra.Command, args []string) error {
 			if len(seqNums) == 0 {
 				continue
 			}
-			seq = new(imap.SeqSet)
-			for _, n := range seqNums {
-				seq.AddNum(n)
+			plans = append(plans, boxPlan{name: box, all: false, count: len(seqNums), seqNums: seqNums})
+			total += len(seqNums)
+		}
+	}
+	if total == 0 {
+		fmt.Println("No messages matched.")
+		return nil
+	}
+
+	progress := make(chan int, 128)
+	errc := make(chan error, 1)
+	go func() {
+		defer close(progress)
+		defer close(errc)
+		const chunkSize = 500
+		for _, p := range plans {
+			// Select RW to update flags
+			if _, err := imaputil.SelectMailbox(dst, p.name, false); err != nil {
+				fmt.Fprintf(os.Stderr, "select %s: %v\n", p.name, err)
+				continue
+			}
+			if p.all {
+				seq := new(imap.SeqSet)
+				seq.AddRange(1, 0)
+				if err := dst.Store(seq, imap.AddFlags, []interface{}{imap.SeenFlag}, nil); err != nil {
+					fmt.Fprintf(os.Stderr, "store %s: %v\n", p.name, err)
+					continue
+				}
+				progress <- p.count
+			} else {
+				// chunked updates
+				for i := 0; i < len(p.seqNums); i += chunkSize {
+					end := i + chunkSize
+					if end > len(p.seqNums) {
+						end = len(p.seqNums)
+					}
+					seq := new(imap.SeqSet)
+					for _, n := range p.seqNums[i:end] {
+						seq.AddNum(n)
+					}
+					if err := dst.Store(seq, imap.AddFlags, []interface{}{imap.SeenFlag}, nil); err != nil {
+						fmt.Fprintf(os.Stderr, "store %s: %v\n", p.name, err)
+						break
+					}
+					progress <- (end - i)
+				}
 			}
 		}
-		if err := dst.Store(seq, imap.AddFlags, []interface{}{imap.SeenFlag}, nil); err != nil {
-			fmt.Fprintf(os.Stderr, "store %s: %v\n", box, err)
-			continue
-		}
-		fmt.Printf("Marked messages in %s as \\Seen.\n", box)
-	}
+		errc <- nil
+	}()
+
+	// Run TUI progress
+	_ = runCountTUI(total, "Mark as \\Seen", progress, errc)
 	return nil
 }
 
