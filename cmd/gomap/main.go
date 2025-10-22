@@ -101,7 +101,15 @@ func main() {
 	}
 	addDeleteFlags(deleteCmd)
 
-	rootCmd.AddCommand(sendCmd, backupCmd, markReadCmd, deleteCmd)
+	// analyze-mbox command
+	analyzeMboxCmd := &cobra.Command{
+		Use:   "analyze-mbox",
+		Short: "Analyze an MBOX file for Date headers (presence/parseability)",
+		RunE:  runAnalyzeMbox,
+	}
+	addAnalyzeMboxFlags(analyzeMboxCmd)
+
+	rootCmd.AddCommand(sendCmd, backupCmd, markReadCmd, deleteCmd, analyzeMboxCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1587,3 +1595,130 @@ func parseMappings(pairs []string) map[string]string {
 }
 
 // TUI implemented in tui.go
+
+// ========================= ANALYZE-MBOX =========================
+
+type analyzeMboxOptions struct {
+	mboxPath string
+	limit    int // sample lines per category
+}
+
+func addAnalyzeMboxFlags(cmd *cobra.Command) {
+	o := &analyzeMboxOptions{}
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = false
+	cmd.Flags().StringVar(&o.mboxPath, "mbox", "", "Path to MBOX file to analyze")
+	cmd.Flags().IntVar(&o.limit, "limit", 5, "Sample size per category to print")
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		cmd.SetContext(context.WithValue(cmd.Context(), ctxKey{}, o))
+		return nil
+	}
+}
+
+func runAnalyzeMbox(cmd *cobra.Command, args []string) error {
+	o := cmd.Context().Value(ctxKey{}).(*analyzeMboxOptions)
+	if o.mboxPath == "" {
+		return fmt.Errorf("--mbox is required")
+	}
+	f, err := os.Open(o.mboxPath)
+	if err != nil {
+		return fmt.Errorf("open mbox: %w", err)
+	}
+	defer f.Close()
+
+	r := mbox.NewReader(f)
+	type sample struct{ header string }
+	var withDateParsed, withDateUnparsed, withoutDate int
+	withDateParsedSamples := []sample{}
+	withDateUnparsedSamples := []sample{}
+	withoutDateSamples := []sample{}
+
+	for {
+		mr, err := r.NextMessage()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read mbox: %w", err)
+		}
+		// Read only headers quickly (up to first blank line)
+		br := bufio.NewReader(mr)
+		var headerBuf bytes.Buffer
+		for {
+			line, rerr := br.ReadString('\n')
+			if len(line) > 0 {
+				headerBuf.WriteString(line)
+				tl := strings.TrimRight(line, "\r\n")
+				if tl == "" { // end of headers
+					break
+				}
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				return rerr
+			}
+		}
+		hdr := headerBuf.String()
+		var has bool
+		var parsed bool
+		if msg, perr := mail.ReadMessage(strings.NewReader(hdr)); perr == nil {
+			if dh := msg.Header.Get("Date"); dh != "" {
+				has = true
+				if _, per := mail.ParseDate(dh); per == nil {
+					parsed = true
+				}
+			}
+		} else {
+			has = hasDateHeaderFast(hdr)
+			// parsed remains false in fallback
+		}
+		switch {
+		case has && parsed:
+			withDateParsed++
+			if len(withDateParsedSamples) < o.limit {
+				withDateParsedSamples = append(withDateParsedSamples, sample{header: firstHeaderLines(hdr, 10)})
+			}
+		case has && !parsed:
+			withDateUnparsed++
+			if len(withDateUnparsedSamples) < o.limit {
+				withDateUnparsedSamples = append(withDateUnparsedSamples, sample{header: firstHeaderLines(hdr, 10)})
+			}
+		default:
+			withoutDate++
+			if len(withoutDateSamples) < o.limit {
+				withoutDateSamples = append(withoutDateSamples, sample{header: firstHeaderLines(hdr, 10)})
+			}
+		}
+	}
+
+	fmt.Printf("MBOX analyze: %s\n", o.mboxPath)
+	fmt.Printf("  with Date (parsed):     %d\n", withDateParsed)
+	fmt.Printf("  with Date (unparsed):   %d\n", withDateUnparsed)
+	fmt.Printf("  without Date header:    %d\n", withoutDate)
+	fmt.Println()
+	if len(withDateUnparsedSamples) > 0 {
+		fmt.Println("Samples: with Date (unparsed)")
+		for i, s := range withDateUnparsedSamples {
+			fmt.Printf("--- %d ---\n%s\n", i+1, s.header)
+		}
+		fmt.Println()
+	}
+	if len(withoutDateSamples) > 0 {
+		fmt.Println("Samples: without Date header")
+		for i, s := range withoutDateSamples {
+			fmt.Printf("--- %d ---\n%s\n", i+1, s.header)
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
+func firstHeaderLines(hdr string, n int) string {
+	lines := strings.Split(hdr, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}

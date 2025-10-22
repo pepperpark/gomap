@@ -16,6 +16,7 @@ Note: Test with non-production accounts first. Use at your own risk.
 - Dry-run mode
 - Configurable per-folder concurrency
 - Bubble Tea TUI with a single overall progress bar by default, smoothed ETA, and quick cancel (q / Ctrl+C)
+- Diagnostics: analyze MBOX files for Date header presence/parseability
 
 ## Installation
 
@@ -80,6 +81,24 @@ Date handling for MBOX imports:
 - The tool uses the message's `Date:` header if it can be parsed.
 - If `Date:` is missing/unparseable, it falls back to (in order): `Resent-Date`, `Delivery-date`, then the earliest timestamp parsed from `Received:` headers. As a last resort, it uses the current time.
 - This determines the INTERNALDATE on the destination server during APPEND.
+
+Analyze MBOX (diagnostics):
+
+Use the built-in analyzer to understand how many messages in an MBOX have missing or unparseable `Date:` headers. This helps decide whether to use `--mbox-only-missing-date` or `--mbox-only-unparseable-date` for a targeted re-import.
+
+```
+./gomap analyze-mbox \
+  --mbox /path/to/mail.mbox \
+  --limit 5
+```
+
+The analyzer prints counts for:
+
+- with Date (parsed)
+- with Date (unparsed)
+- without Date header
+
+and shows a few header samples per category (limited by `--limit`).
 
 Only import messages missing/unparseable Date headers:
 
@@ -304,6 +323,10 @@ Security (SMTP):
 - APPEND keeps flags and INTERNALDATE, but message IDs and UIDs on the destination will be new (different UIDVALIDITY/UIDs).
 - Rate limits: some providers throttle parallel access. Reduce `--concurrency` if needed.
 - STARTTLS vs TLS: use `--starttls` for port 143; use implicit TLS for 993.
+
+Debugging:
+
+- IMAP wire log: set environment variable `GOMAP_IMAP_DEBUG=1` to print raw IMAP protocol traffic to stderr (useful for diagnosing server responses).
 
 Security:
 
