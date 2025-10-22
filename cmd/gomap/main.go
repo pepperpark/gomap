@@ -117,9 +117,10 @@ type copyOptions struct {
 	srcPass       string
 	srcPassPrompt bool
 	// MBOX source
-	mboxPath            string
-	dstMbox             string // destination mailbox name when using mbox
-	mboxOnlyMissingDate bool   // when true, only import MBOX messages without a parseable Date header (ignore resume state)
+	mboxPath                string
+	dstMbox                 string // destination mailbox name when using mbox
+	mboxOnlyMissingDate     bool   // when true, only import MBOX messages without a Date header (ignore resume state)
+	mboxOnlyUnparseableDate bool   // when true, only import MBOX messages where Date header exists but cannot be parsed (ignore resume state)
 
 	// Destination IMAP
 	dstHost       string
@@ -158,7 +159,8 @@ func addCopyFlags(cmd *cobra.Command) {
 	// MBOX
 	cmd.Flags().StringVar(&o.mboxPath, "mbox", "", "Read from local MBOX file instead of source IMAP")
 	cmd.Flags().StringVar(&o.dstMbox, "dst-mailbox", "INBOX", "Destination mailbox name when using --mbox")
-	cmd.Flags().BoolVar(&o.mboxOnlyMissingDate, "mbox-only-missing-date", false, "With --mbox: only import messages without a parseable Date header (ignores resume state)")
+	cmd.Flags().BoolVar(&o.mboxOnlyMissingDate, "mbox-only-missing-date", false, "With --mbox: only import messages without a Date header (ignores resume state)")
+	cmd.Flags().BoolVar(&o.mboxOnlyUnparseableDate, "mbox-only-unparseable-date", false, "With --mbox: only import messages whose Date header exists but cannot be parsed (ignores resume state)")
 
 	cmd.Flags().StringVar(&o.dstHost, "dst-host", "", "Destination IMAP host")
 	cmd.Flags().IntVar(&o.dstPort, "dst-port", 993, "Destination IMAP port")
@@ -1267,9 +1269,9 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 	absPath, _ := filepath.Abs(o.mboxPath)
 	stateKey := fmt.Sprintf("mbox:%s|dst:%s", absPath, o.dstMbox)
 	var startOffset int64
-	// If only importing messages missing Date header, we need to scan the whole file;
-	// ignore resume state to avoid skipping earlier messages without Date.
-	if !o.ignoreState && !o.mboxOnlyMissingDate {
+	// If importing only messages missing Date or with unparseable Date, scan the whole file;
+	// ignore resume state to avoid skipping earlier matches.
+	if !o.ignoreState && !o.mboxOnlyMissingDate && !o.mboxOnlyUnparseableDate {
 		startOffset = st.GetMboxOffset(stateKey)
 	}
 	if startOffset > 0 {
@@ -1278,10 +1280,20 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 		}
 	}
 
-	// Count remaining messages quickly from current position
-	total, err := countMboxMessages(f)
-	if err != nil {
-		return err
+	// Count messages for progress
+	var total int
+	if o.mboxOnlyMissingDate || o.mboxOnlyUnparseableDate {
+		// Count only messages that match the selection
+		total, err = countMboxSelected(f, o.mboxOnlyMissingDate, o.mboxOnlyUnparseableDate)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Count remaining messages quickly from current position
+		total, err = countMboxMessages(f)
+		if err != nil {
+			return err
+		}
 	}
 	// reset file
 	if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
@@ -1333,13 +1345,20 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 			raw := bldr.String()
 			// Parse headers to determine date
 			var date time.Time
-			var hasParseableDate bool
+			var hasDateHeader bool
+			var dateHeaderParsed bool
 			if msg, perr := mail.ReadMessage(strings.NewReader(raw)); perr == nil {
 				// 1) Primary: Date
 				if dh := msg.Header.Get("Date"); dh != "" {
+					hasDateHeader = true
 					if t, per := mail.ParseDate(dh); per == nil {
 						date = t
-						hasParseableDate = true
+						dateHeaderParsed = true
+					} else {
+						// Fallback: detect presence of Date header with a lightweight scan
+						if hasDateHeaderFast(raw) {
+							hasDateHeader = true
+						}
 					}
 				}
 				// 2) Fallbacks if Date missing/unparseable
@@ -1378,8 +1397,17 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 					}
 				}
 			}
-			// When only importing messages missing Date headers, skip ones that had a parseable Date
-			if o.mboxOnlyMissingDate && hasParseableDate {
+			// Apply filters
+			// Only missing Date: skip any with a Date header
+			if o.mboxOnlyMissingDate && hasDateHeader {
+				if !o.dryRun {
+					endPos, _ := f.Seek(0, io.SeekCurrent)
+					st.SetMboxOffset(stateKey, endPos)
+				}
+				continue
+			}
+			// Only unparseable Date: include only if Date header exists but could not be parsed
+			if o.mboxOnlyUnparseableDate && !(hasDateHeader && !dateHeaderParsed) {
 				// advance state to current position to avoid reprocessing on save below
 				if !o.dryRun {
 					endPos, _ := f.Seek(0, io.SeekCurrent)
@@ -1391,9 +1419,29 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 				// As a last resort, use current time
 				date = time.Now()
 			}
+			included := true
+			// Apply selection flags once more to decide inclusion
+			if o.mboxOnlyMissingDate && hasDateHeader {
+				included = false
+			}
+			if o.mboxOnlyUnparseableDate && !(hasDateHeader && date.IsZero()) {
+				// Note: date.IsZero() here indicates Date header was present but not parsed into 'date'
+				included = false
+			}
+
+			if !included {
+				// skip progress increment for excluded messages
+				continue
+			}
+
 			if o.dryRun {
 				if o.verbose {
-					log.Printf("[dry-run] append %s date=%s", o.dstMbox, date.Format(time.RFC3339))
+					log.Printf("[dry-run] append %s date=%s", o.dstMbox, func() string {
+						if date.IsZero() {
+							return "<now>"
+						}
+						return date.Format(time.RFC3339)
+					}())
 				}
 			} else {
 				if _, err := imaputil.SelectMailbox(dst, o.dstMbox, false); err != nil {
@@ -1441,6 +1489,86 @@ func countMboxMessages(r io.Reader) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+// countMboxSelected counts only messages that match selection flags.
+func countMboxSelected(f *os.File, onlyMissingDate, onlyUnparseableDate bool) (int, error) {
+	// Start from current position; caller should have seeked appropriately
+	r := mbox.NewReader(f)
+	count := 0
+	for {
+		mr, err := r.NextMessage()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+		var bldr strings.Builder
+		if _, err := io.Copy(&bldr, mr); err != nil {
+			return 0, err
+		}
+		raw := bldr.String()
+		var hasDateHeader bool
+		var dateHeaderParsed bool
+		if msg, perr := mail.ReadMessage(strings.NewReader(raw)); perr == nil {
+			if dh := msg.Header.Get("Date"); dh != "" {
+				hasDateHeader = true
+				if _, per := mail.ParseDate(dh); per == nil {
+					dateHeaderParsed = true
+				}
+			}
+		} else {
+			if hasDateHeaderFast(raw) {
+				hasDateHeader = true
+			}
+		}
+		include := true
+		if onlyMissingDate && hasDateHeader {
+			include = false
+		}
+		if onlyUnparseableDate && !(hasDateHeader && !dateHeaderParsed) {
+			include = false
+		}
+		if include {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// hasDateHeaderFast scans the header block for a Date: field without full RFC parsing.
+func hasDateHeaderFast(raw string) bool {
+	// Look at the header portion (before first empty line)
+	// Accept both CRLF and LF; lines may be long, but scanning is fine.
+	// We ignore continuations; presence detection only needs the field name line.
+	// Case-insensitive match on "Date:" at line start (allow leading spaces defensively).
+	// Stop at first blank line.
+	for i := 0; i < len(raw); {
+		// find line end
+		j := i
+		for j < len(raw) && raw[j] != '\n' {
+			j++
+		}
+		line := raw[i:j]
+		// Trim CR and leading spaces
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		if trimmed == "" { // blank line ends header
+			break
+		}
+		low := strings.ToLower(trimmed)
+		if strings.HasPrefix(low, "date:") {
+			return true
+		}
+		if j == len(raw) {
+			break
+		}
+		i = j + 1 // next line
+	}
+	return false
 }
 
 // parseMappings converts `src=dst` pairs into a map

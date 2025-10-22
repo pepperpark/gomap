@@ -81,7 +81,7 @@ Date handling for MBOX imports:
 - If `Date:` is missing/unparseable, it falls back to (in order): `Resent-Date`, `Delivery-date`, then the earliest timestamp parsed from `Received:` headers. As a last resort, it uses the current time.
 - This determines the INTERNALDATE on the destination server during APPEND.
 
-Only import messages missing Date headers:
+Only import messages missing/unparseable Date headers:
 
 If you need to re-import only messages that had no parseable `Date:` (for example to correct dates), you can filter with:
 
@@ -93,7 +93,10 @@ If you need to re-import only messages that had no parseable `Date:` (for exampl
   --mbox-only-missing-date
 ```
 
-Note: `--mbox-only-missing-date` scans the whole file and ignores the resume offset so earlier messages without `Date:` aren't skipped.
+Notes:
+
+- `--mbox-only-missing-date` scans the whole file and ignores the resume offset so earlier messages without `Date:` aren't skipped.
+- Alternatively, use `--mbox-only-unparseable-date` to select messages that have a `Date:` header which cannot be parsed (also ignores resume state).
 
 Fix wrongly dated “today” messages (MBOX import)
 
