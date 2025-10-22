@@ -75,6 +75,26 @@ Resume for MBOX imports:
 - Use `--ignore-state` or a fresh `--state-file` to restart from the beginning of the MBOX.
 - If the MBOX file changed (truncated/rotated) after a run, the stored offset may be invalid; restart with `--ignore-state` or a new state file.
 
+Date handling for MBOX imports:
+
+- The tool uses the message's `Date:` header if it can be parsed.
+- If `Date:` is missing/unparseable, it falls back to (in order): `Resent-Date`, `Delivery-date`, then the earliest timestamp parsed from `Received:` headers. As a last resort, it uses the current time.
+- This determines the INTERNALDATE on the destination server during APPEND.
+
+Only import messages missing Date headers:
+
+If you need to re-import only messages that had no parseable `Date:` (for example to correct dates), you can filter with:
+
+```
+./gomap copy \
+  --mbox /path/to/mail.mbox \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --dst-mailbox INBOX \
+  --mbox-only-missing-date
+```
+
+Note: `--mbox-only-missing-date` scans the whole file and ignores the resume offset so earlier messages without `Date:` aren't skipped.
+
 You can also prompt for passwords (no echo):
 
 ```
