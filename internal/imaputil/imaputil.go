@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/emersion/go-imap"
@@ -30,6 +31,10 @@ func DialAndLogin(ctx context.Context, host string, port int, user, pass string,
 		if err != nil {
 			return nil, err
 		}
+	}
+	// Enable raw IMAP wire debug if requested via environment variable
+	if os.Getenv("GOMAP_IMAP_DEBUG") == "1" {
+		c.SetDebug(os.Stderr)
 	}
 	// Login
 	if err := c.Login(user, pass); err != nil {

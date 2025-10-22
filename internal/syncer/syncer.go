@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -198,7 +199,16 @@ func (m *MailboxSyncer) appendToDst(name string, r imap.Literal, date time.Time,
 	if _, err := imaputil.SelectMailbox(m.dst, dstName, false); err != nil {
 		return err
 	}
-	if err := m.dst.Append(dstName, flags, date, r); err != nil {
+	// Filter flags: some servers reject the \Recent system flag on APPEND.
+	filtered := make([]string, 0, len(flags))
+	for _, f := range flags {
+		if strings.EqualFold(f, "\\Recent") {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+
+	if err := m.dst.Append(dstName, filtered, date, r); err != nil {
 		return fmt.Errorf("append: %w", err)
 	}
 	return nil
