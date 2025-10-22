@@ -107,7 +107,7 @@ Behavior notes:
 - Include/Exclude filters and skip-special options apply to IMAP source mode. When using `--mbox`, the filters are not used.
 - In MBOX → IMAP mode, the progress total reflects messages remaining from the current resume offset.
 
-### Receive (IMAP → filesystem)
+### Backup (IMAP → filesystem)
 
 Download messages from a source IMAP account into the local filesystem. Two formats are supported:
 
@@ -118,19 +118,19 @@ Examples:
 
 ```
 # Single-file mode (default)
-./gomap receive \
+./gomap backup \
   --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
   --include '^(INBOX|Archive.*)$' --since 2024-01-01 \
   --output-dir backup
 
 # Mbox mode
-./gomap receive \
+./gomap backup \
   --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
   --format mbox \
   --output-dir backup
 ```
 
-Flags (receive):
+Flags (backup):
 
 - `--src-host`, `--src-port`, `--src-user`, `--src-pass` (or `--src-pass-prompt`)
 - `--insecure`, `--starttls`
@@ -145,6 +145,64 @@ Behavior:
 - Single-file mode resumes by skipping existing files (UID.eml). Re-running is idempotent.
 - Mbox mode appends raw messages; re-running may duplicate messages unless filtered with `--since` or external dedupe is used.
 - Mailbox-to-path mapping: remote folder names become directories under `--output-dir` (single-file) or `.mbox` file names (mbox mode). Unsafe characters are sanitized to safe path segments.
+
+### Mark-read (set \Seen)
+
+Mark all messages as read in one or multiple mailboxes. Supports date range filters.
+
+Examples:
+
+```
+# INBOX: all messages
+./gomap mark-read \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --mailbox INBOX
+
+# All mailboxes, filtered, date range inclusive
+./gomap mark-read \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --all --include '^(INBOX|Archive.*)$' --exclude '^Spam|^Trash' \
+  --start-date 2024-01-01 --end-date 2024-12-31
+```
+
+Flags:
+
+- `--mailbox` NAME or `--all` with `--include/--exclude` (regex)
+- `--start-date YYYY-MM-DD` (INTERNALDATE >=)
+- `--end-date YYYY-MM-DD` (inclusive; internally BEFORE end+1d)
+- IMAP connection flags: `--dst-host`, `--dst-port`, `--dst-user`, `--dst-pass`, `--dst-pass-prompt`, `--insecure`, `--starttls`
+
+### Delete (with confirmation)
+
+Delete messages in one or multiple mailboxes, optionally restricted by date range. A Bubble Tea confirmation prompt summarizes the action before applying. By default, messages are expunged after marking as `\\Deleted`.
+
+Examples:
+
+```
+# Dry-run preview
+./gomap delete \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --mailbox INBOX --end-date 2023-12-31 --dry-run
+
+# Delete and expunge across mailboxes
+./gomap delete \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --all --exclude '^Spam|^Trash' \
+  --start-date 2020-01-01 --end-date 2022-12-31 \
+  --expunge true
+```
+
+Flags:
+
+- `--mailbox` NAME or `--all` with `--include/--exclude` (regex)
+- `--start-date YYYY-MM-DD`, `--end-date YYYY-MM-DD` (inclusive end)
+- `--dry-run` to preview without changes
+- `--expunge` (default true) to permanently remove after marking `\\Deleted`
+- IMAP connection flags: `--dst-host`, `--dst-port`, `--dst-user`, `--dst-pass`, `--dst-pass-prompt`, `--insecure`, `--starttls`
+
+Safety:
+
+- A TUI confirmation dialog summarizes mailbox, range and options. Confirm with `y`, cancel with `n`.
 
 ### Send (SMTP)
 
@@ -216,7 +274,7 @@ Notes:
 - `mail_max_uid`: A message is considered for copy if it matches the date filter and its UID is greater than the stored value (unless `--ignore-state`).
 - `mbox_offsets`: Offset is in bytes from the start of the MBOX file. Re-runs continue from that position. Use `--ignore-state` or a fresh `--state-file` to start from the beginning.
 - If an MBOX file was truncated or rotated after a run, the stored offset may be invalid—restart with `--ignore-state` or delete the entry.
-- Receive command does not use the state file: single-file mode resumes by skipping existing `UID.eml`; receive mbox mode appends and may duplicate on re-runs unless you constrain with `--since`.
+- Backup command does not use the state file: single-file mode resumes by skipping existing `UID.eml`; backup mbox mode appends and may duplicate on re-runs unless you constrain with `--since`.
 
 ## License
 

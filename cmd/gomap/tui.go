@@ -381,3 +381,53 @@ func runMboxTUI(total int, progress <-chan int, errc <-chan error) []error {
 	// Return none; errs were printed within TUI
 	return []error{}
 }
+
+// --- Confirmation TUI ---
+
+type confirmModel struct {
+	title   string
+	summary string
+	choice  *bool
+}
+
+func newConfirmModel(title, summary string) *confirmModel {
+	return &confirmModel{title: title, summary: summary}
+}
+
+func (m *confirmModel) Init() tea.Cmd { return nil }
+
+func (m *confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "y", "enter":
+			v := true
+			m.choice = &v
+			return m, tea.Quit
+		case "n", "q", "esc", "ctrl+c":
+			v := false
+			m.choice = &v
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m *confirmModel) View() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Render(m.title)
+	desc := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Press y to confirm, n to cancel")
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2).Width(78).Render(m.summary)
+	return fmt.Sprintf("%s\n\n%s\n\n%s\n", title, box, desc)
+}
+
+// runConfirmTUI displays a confirmation dialog with a summary and returns true if confirmed.
+func runConfirmTUI(title, summary string) (bool, error) {
+	m := newConfirmModel(title, summary)
+	if _, err := tea.NewProgram(m).Run(); err != nil {
+		return false, err
+	}
+	if m.choice == nil {
+		return false, nil
+	}
+	return *m.choice, nil
+}
