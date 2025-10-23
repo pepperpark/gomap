@@ -18,9 +18,25 @@
   document.querySelectorAll('.code').forEach(block => {
     const btn = block.querySelector('.copy');
     const code = block.querySelector('code');
-    btn?.addEventListener('click', async () => {
+    if(!btn || !code) return;
+    btn.addEventListener('click', async () => {
+      const text = code.textContent ?? '';
       try{
-        await navigator.clipboard.writeText(code.textContent);
+        if(navigator.clipboard?.writeText){
+          await navigator.clipboard.writeText(text);
+        }else{
+          // Fallback for non-secure contexts and older browsers
+          const textarea = document.createElement('textarea');
+          textarea.value = text;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(textarea);
+          if(!ok) throw new Error('execCommand copy failed');
+        }
         const old = btn.textContent; btn.textContent = 'Copied!';
         setTimeout(()=> btn.textContent = old, 1200);
       }catch(e){ console.error('Copy failed', e); }

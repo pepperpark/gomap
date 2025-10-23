@@ -82,6 +82,19 @@
             <p><a class="link" href="https://github.com/pepperpark/gomap/releases/latest" target="_blank" rel="noreferrer">Releases page ↗</a></p>
           </div>
           <div class="card">
+            <h3>Ubuntu packages</h3>
+            <p>Install from the official PPA:</p>
+            <pre class="code"><code>sudo add-apt-repository ppa:pepperpark/gomap
+sudo apt update
+sudo apt install gomap</code><button class="copy" title="Copy" aria-label="Copy to clipboard">Copy</button></pre>
+          </div>
+          <div class="card">
+            <h3>Go install</h3>
+            <p>Install the latest version directly with Go:</p>
+            <pre class="code"><code>go install github.com/pepperpark/gomap/cmd/gomap@latest</code><button class="copy" title="Copy" aria-label="Copy to clipboard">Copy</button></pre>
+            <p>Replace <code>@latest</code> with a tagged version (e.g. <code>@v0.3.0</code>) to pin releases.</p>
+          </div>
+          <div class="card">
             <h3>Build from source</h3>
             <p>Clone and build a static binary:</p>
             <pre class="code"><code>git clone https://github.com/pepperpark/gomap
@@ -89,7 +102,7 @@ cd gomap
 make build   # or: go build -o gomap ./cmd/gomap</code><button class="copy" title="Copy" aria-label="Copy to clipboard">Copy</button></pre>
           </div>
         </div>
-        <p class="note">Note: direct <code>go install</code> may depend on the module path; prefer releases or building in the cloned repo.</p>
+        <p class="note">Note: <code>go install</code> requires Go 1.21+ and places the binary in <code>$(go env GOPATH)/bin</code>, so ensure that directory is on your <code>PATH</code>.</p>
       </section>
 
       <section class="container" id="usage">
