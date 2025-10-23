@@ -1,4 +1,4 @@
-module github.com/yourname/gomap
+module github.com/pepperpark/gomap
 
 go 1.22.3
 
