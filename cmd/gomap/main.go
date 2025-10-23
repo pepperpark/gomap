@@ -76,14 +76,40 @@ func main() {
 		RunE:  runSend,
 	}
 	addSendFlags(sendCmd)
-	// receive command
-	receiveCmd := &cobra.Command{
-		Use:   "receive",
-		Short: "Receive emails from IMAP and store locally",
-		RunE:  runReceive,
+	// backup command (formerly 'receive')
+	backupCmd := &cobra.Command{
+		Use:     "backup",
+		Aliases: []string{"receive"},
+		Short:   "Backup emails from IMAP to the local filesystem",
+		RunE:    runReceive,
 	}
-	addReceiveFlags(receiveCmd)
-	rootCmd.AddCommand(sendCmd, receiveCmd)
+	addReceiveFlags(backupCmd)
+
+	// mark-read command
+	markReadCmd := &cobra.Command{
+		Use:   "mark-read",
+		Short: "Mark all messages in a destination mailbox as \\Seen",
+		RunE:  runMarkRead,
+	}
+	addMarkReadFlags(markReadCmd)
+
+	// delete command
+	deleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete messages in a destination mailbox (date-range aware)",
+		RunE:  runDelete,
+	}
+	addDeleteFlags(deleteCmd)
+
+	// analyze-mbox command
+	analyzeMboxCmd := &cobra.Command{
+		Use:   "analyze-mbox",
+		Short: "Analyze an MBOX file for Date headers (presence/parseability)",
+		RunE:  runAnalyzeMbox,
+	}
+	addAnalyzeMboxFlags(analyzeMboxCmd)
+
+	rootCmd.AddCommand(sendCmd, backupCmd, markReadCmd, deleteCmd, analyzeMboxCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -99,8 +125,10 @@ type copyOptions struct {
 	srcPass       string
 	srcPassPrompt bool
 	// MBOX source
-	mboxPath string
-	dstMbox  string // destination mailbox name when using mbox
+	mboxPath                string
+	dstMbox                 string // destination mailbox name when using mbox
+	mboxOnlyMissingDate     bool   // when true, only import MBOX messages without a Date header (ignore resume state)
+	mboxOnlyUnparseableDate bool   // when true, only import MBOX messages where Date header exists but cannot be parsed (ignore resume state)
 
 	// Destination IMAP
 	dstHost       string
@@ -139,6 +167,8 @@ func addCopyFlags(cmd *cobra.Command) {
 	// MBOX
 	cmd.Flags().StringVar(&o.mboxPath, "mbox", "", "Read from local MBOX file instead of source IMAP")
 	cmd.Flags().StringVar(&o.dstMbox, "dst-mailbox", "INBOX", "Destination mailbox name when using --mbox")
+	cmd.Flags().BoolVar(&o.mboxOnlyMissingDate, "mbox-only-missing-date", false, "With --mbox: only import messages without a Date header (ignores resume state)")
+	cmd.Flags().BoolVar(&o.mboxOnlyUnparseableDate, "mbox-only-unparseable-date", false, "With --mbox: only import messages whose Date header exists but cannot be parsed (ignores resume state)")
 
 	cmd.Flags().StringVar(&o.dstHost, "dst-host", "", "Destination IMAP host")
 	cmd.Flags().IntVar(&o.dstPort, "dst-port", 993, "Destination IMAP port")
@@ -211,7 +241,7 @@ func runCopy(cmd *cobra.Command, args []string) error {
 	return runCopyMBOX(cmd, o)
 }
 
-// ========================= RECEIVE =========================
+// ========================= BACKUP =========================
 
 type receiveOptions struct {
 	// IMAP source
@@ -261,6 +291,420 @@ func addReceiveFlags(cmd *cobra.Command) {
 		cmd.SetContext(context.WithValue(cmd.Context(), ctxKey{}, o))
 		return nil
 	}
+}
+
+// ========================= MARK-READ =========================
+
+type markReadOptions struct {
+	// Destination IMAP
+	dstHost       string
+	dstPort       int
+	dstUser       string
+	dstPass       string
+	dstPassPrompt bool
+	insecure      bool
+	startTLS      bool
+	mailbox       string
+	all           bool
+	include       string
+	exclude       string
+	startDate     string // YYYY-MM-DD
+	endDate       string // YYYY-MM-DD (inclusive)
+}
+
+func addMarkReadFlags(cmd *cobra.Command) {
+	o := &markReadOptions{}
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = false
+	cmd.Flags().StringVar(&o.dstHost, "dst-host", "", "Destination IMAP host")
+	cmd.Flags().IntVar(&o.dstPort, "dst-port", 993, "Destination IMAP port")
+	cmd.Flags().StringVar(&o.dstUser, "dst-user", "", "Destination IMAP username")
+	cmd.Flags().StringVar(&o.dstPass, "dst-pass", "", "Destination IMAP password")
+	cmd.Flags().BoolVar(&o.dstPassPrompt, "dst-pass-prompt", false, "Prompt for destination IMAP password (no echo)")
+	cmd.Flags().BoolVar(&o.insecure, "insecure", false, "Skip TLS verification")
+	cmd.Flags().BoolVar(&o.startTLS, "starttls", false, "Use STARTTLS instead of implicit TLS")
+	cmd.Flags().StringVar(&o.mailbox, "mailbox", "INBOX", "Mailbox to mark as read (\\Seen)")
+	cmd.Flags().BoolVar(&o.all, "all", false, "Apply to all mailboxes (overrides --mailbox)")
+	cmd.Flags().StringVar(&o.include, "include", "", "Regex of mailboxes to include (used with --all)")
+	cmd.Flags().StringVar(&o.exclude, "exclude", "", "Regex of mailboxes to exclude (used with --all)")
+	cmd.Flags().StringVar(&o.startDate, "start-date", "", "Only affect messages with INTERNALDATE >= start-date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&o.endDate, "end-date", "", "Only affect messages with INTERNALDATE <= end-date (YYYY-MM-DD)")
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		cmd.SetContext(context.WithValue(cmd.Context(), ctxKey{}, o))
+		return nil
+	}
+}
+
+func runMarkRead(cmd *cobra.Command, args []string) error {
+	o := cmd.Context().Value(ctxKey{}).(*markReadOptions)
+	if o.dstPassPrompt && o.dstPass == "" {
+		fmt.Fprint(os.Stderr, "Destination password: ")
+		b, perr := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if perr != nil {
+			return fmt.Errorf("read destination password: %w", perr)
+		}
+		o.dstPass = string(b)
+	}
+	if o.dstHost == "" || o.dstUser == "" || o.dstPass == "" {
+		return fmt.Errorf("missing required flags: --dst-host, --dst-user, --dst-pass")
+	}
+	tlsConfig := &tls.Config{InsecureSkipVerify: o.insecure}
+	ctx := cmd.Context()
+	dst, err := imaputil.DialAndLogin(ctx, o.dstHost, o.dstPort, o.dstUser, o.dstPass, o.startTLS, tlsConfig)
+	if err != nil {
+		return fmt.Errorf("connect destination: %w", err)
+	}
+	defer dst.Logout()
+
+	// Resolve mailbox list
+	boxes := []string{o.mailbox}
+	if o.all {
+		// list all, then filter include/exclude
+		allBoxes, err := imaputil.ListMailboxes(ctx, dst)
+		if err != nil {
+			return fmt.Errorf("list mailboxes: %w", err)
+		}
+		var includeRe, excludeRe *regexp.Regexp
+		if o.include != "" {
+			includeRe, err = regexp.Compile(o.include)
+			if err != nil {
+				return fmt.Errorf("invalid --include: %w", err)
+			}
+		}
+		if o.exclude != "" {
+			excludeRe, err = regexp.Compile(o.exclude)
+			if err != nil {
+				return fmt.Errorf("invalid --exclude: %w", err)
+			}
+		}
+		boxes = boxes[:0]
+		for _, b := range allBoxes {
+			if includeRe != nil && !includeRe.MatchString(b) {
+				continue
+			}
+			if excludeRe != nil && excludeRe.MatchString(b) {
+				continue
+			}
+			boxes = append(boxes, b)
+		}
+		if len(boxes) == 0 {
+			fmt.Println("No mailboxes matched.")
+			return nil
+		}
+	}
+
+	// Prepare search date range
+	var since, before time.Time
+	if o.startDate != "" {
+		t, err := time.Parse("2006-01-02", o.startDate)
+		if err != nil {
+			return fmt.Errorf("invalid --start-date: %w", err)
+		}
+		since = t
+	}
+	if o.endDate != "" {
+		t, err := time.Parse("2006-01-02", o.endDate)
+		if err != nil {
+			return fmt.Errorf("invalid --end-date: %w", err)
+		}
+		// BEFORE is strictly earlier than the date; to make end inclusive, add one day
+		before = t.Add(24 * time.Hour)
+	}
+
+	// Pre-scan to compute total messages to update and cache per-mailbox sequences (for date-filtered cases)
+	type boxPlan struct {
+		name    string
+		all     bool
+		count   int
+		seqNums []uint32 // only set when date-filtered
+	}
+	plans := make([]boxPlan, 0, len(boxes))
+	total := 0
+	for _, box := range boxes {
+		// read-only select to get message count cheaply
+		status, err := imaputil.SelectMailbox(dst, box, true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "select %s: %v\n", box, err)
+			continue
+		}
+		if since.IsZero() && before.IsZero() {
+			c := int(status.Messages)
+			if c == 0 {
+				continue
+			}
+			plans = append(plans, boxPlan{name: box, all: true, count: c})
+			total += c
+		} else {
+			criteria := imap.NewSearchCriteria()
+			if !since.IsZero() {
+				criteria.Since = since
+			}
+			if !before.IsZero() {
+				criteria.Before = before
+			}
+			seqNums, err := dst.Search(criteria)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "search %s: %v\n", box, err)
+				continue
+			}
+			if len(seqNums) == 0 {
+				continue
+			}
+			plans = append(plans, boxPlan{name: box, all: false, count: len(seqNums), seqNums: seqNums})
+			total += len(seqNums)
+		}
+	}
+	if total == 0 {
+		fmt.Println("No messages matched.")
+		return nil
+	}
+
+	progress := make(chan int, 128)
+	errc := make(chan error, 1)
+	go func() {
+		defer close(progress)
+		defer close(errc)
+		const chunkSize = 500
+		for _, p := range plans {
+			// Select RW to update flags
+			if _, err := imaputil.SelectMailbox(dst, p.name, false); err != nil {
+				fmt.Fprintf(os.Stderr, "select %s: %v\n", p.name, err)
+				continue
+			}
+			if p.all {
+				seq := new(imap.SeqSet)
+				seq.AddRange(1, 0)
+				if err := dst.Store(seq, imap.AddFlags, []interface{}{imap.SeenFlag}, nil); err != nil {
+					fmt.Fprintf(os.Stderr, "store %s: %v\n", p.name, err)
+					continue
+				}
+				progress <- p.count
+			} else {
+				// chunked updates
+				for i := 0; i < len(p.seqNums); i += chunkSize {
+					end := i + chunkSize
+					if end > len(p.seqNums) {
+						end = len(p.seqNums)
+					}
+					seq := new(imap.SeqSet)
+					for _, n := range p.seqNums[i:end] {
+						seq.AddNum(n)
+					}
+					if err := dst.Store(seq, imap.AddFlags, []interface{}{imap.SeenFlag}, nil); err != nil {
+						fmt.Fprintf(os.Stderr, "store %s: %v\n", p.name, err)
+						break
+					}
+					progress <- (end - i)
+				}
+			}
+		}
+		errc <- nil
+	}()
+
+	// Run TUI progress
+	_ = runCountTUI(total, "Mark as \\Seen", progress, errc)
+	return nil
+}
+
+// ========================= DELETE =========================
+
+type deleteOptions struct {
+	dstHost       string
+	dstPort       int
+	dstUser       string
+	dstPass       string
+	dstPassPrompt bool
+	insecure      bool
+	startTLS      bool
+	mailbox       string
+	all           bool
+	include       string
+	exclude       string
+	startDate     string
+	endDate       string
+	expunge       bool
+	dryRun        bool
+}
+
+func addDeleteFlags(cmd *cobra.Command) {
+	o := &deleteOptions{}
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = false
+	cmd.Flags().StringVar(&o.dstHost, "dst-host", "", "Destination IMAP host")
+	cmd.Flags().IntVar(&o.dstPort, "dst-port", 993, "Destination IMAP port")
+	cmd.Flags().StringVar(&o.dstUser, "dst-user", "", "Destination IMAP username")
+	cmd.Flags().StringVar(&o.dstPass, "dst-pass", "", "Destination IMAP password")
+	cmd.Flags().BoolVar(&o.dstPassPrompt, "dst-pass-prompt", false, "Prompt for destination IMAP password (no echo)")
+	cmd.Flags().BoolVar(&o.insecure, "insecure", false, "Skip TLS verification")
+	cmd.Flags().BoolVar(&o.startTLS, "starttls", false, "Use STARTTLS instead of implicit TLS")
+	cmd.Flags().StringVar(&o.mailbox, "mailbox", "INBOX", "Mailbox to delete messages from")
+	cmd.Flags().BoolVar(&o.all, "all", false, "Apply to all mailboxes (overrides --mailbox)")
+	cmd.Flags().StringVar(&o.include, "include", "", "Regex of mailboxes to include (used with --all)")
+	cmd.Flags().StringVar(&o.exclude, "exclude", "", "Regex of mailboxes to exclude (used with --all)")
+	cmd.Flags().StringVar(&o.startDate, "start-date", "", "Only affect messages with INTERNALDATE >= start-date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&o.endDate, "end-date", "", "Only affect messages with INTERNALDATE <= end-date (YYYY-MM-DD)")
+	cmd.Flags().BoolVar(&o.expunge, "expunge", true, "Permanently remove messages after marking as \\Deleted")
+	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "Don't modify anything, just print what would happen")
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		cmd.SetContext(context.WithValue(cmd.Context(), ctxKey{}, o))
+		return nil
+	}
+}
+
+func runDelete(cmd *cobra.Command, args []string) error {
+	o := cmd.Context().Value(ctxKey{}).(*deleteOptions)
+	if o.dstPassPrompt && o.dstPass == "" {
+		fmt.Fprint(os.Stderr, "Destination password: ")
+		b, perr := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if perr != nil {
+			return fmt.Errorf("read destination password: %w", perr)
+		}
+		o.dstPass = string(b)
+	}
+	if o.dstHost == "" || o.dstUser == "" || o.dstPass == "" {
+		return fmt.Errorf("missing required flags: --dst-host, --dst-user, --dst-pass")
+	}
+	tlsConfig := &tls.Config{InsecureSkipVerify: o.insecure}
+	ctx := cmd.Context()
+	dst, err := imaputil.DialAndLogin(ctx, o.dstHost, o.dstPort, o.dstUser, o.dstPass, o.startTLS, tlsConfig)
+	if err != nil {
+		return fmt.Errorf("connect destination: %w", err)
+	}
+	defer dst.Logout()
+
+	// build mailbox list
+	boxes := []string{o.mailbox}
+	if o.all {
+		allBoxes, err := imaputil.ListMailboxes(ctx, dst)
+		if err != nil {
+			return fmt.Errorf("list mailboxes: %w", err)
+		}
+		var includeRe, excludeRe *regexp.Regexp
+		if o.include != "" {
+			includeRe, err = regexp.Compile(o.include)
+			if err != nil {
+				return fmt.Errorf("invalid --include: %w", err)
+			}
+		}
+		if o.exclude != "" {
+			excludeRe, err = regexp.Compile(o.exclude)
+			if err != nil {
+				return fmt.Errorf("invalid --exclude: %w", err)
+			}
+		}
+		boxes = boxes[:0]
+		for _, b := range allBoxes {
+			if includeRe != nil && !includeRe.MatchString(b) {
+				continue
+			}
+			if excludeRe != nil && excludeRe.MatchString(b) {
+				continue
+			}
+			boxes = append(boxes, b)
+		}
+		if len(boxes) == 0 {
+			fmt.Println("No mailboxes matched.")
+			return nil
+		}
+	}
+
+	var since, before time.Time
+	if o.startDate != "" {
+		t, err := time.Parse("2006-01-02", o.startDate)
+		if err != nil {
+			return fmt.Errorf("invalid --start-date: %w", err)
+		}
+		since = t
+	}
+	if o.endDate != "" {
+		t, err := time.Parse("2006-01-02", o.endDate)
+		if err != nil {
+			return fmt.Errorf("invalid --end-date: %w", err)
+		}
+		before = t.Add(24 * time.Hour)
+	}
+
+	for _, box := range boxes {
+		if _, err := imaputil.SelectMailbox(dst, box, false); err != nil {
+			fmt.Fprintf(os.Stderr, "select %s: %v\n", box, err)
+			continue
+		}
+		var seq *imap.SeqSet
+		actionDesc := "all messages"
+		if since.IsZero() && before.IsZero() {
+			seq = new(imap.SeqSet)
+			seq.AddRange(1, 0)
+		} else {
+			criteria := imap.NewSearchCriteria()
+			if !since.IsZero() {
+				criteria.Since = since
+			}
+			if !before.IsZero() {
+				criteria.Before = before
+			}
+			seqNums, err := dst.Search(criteria)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "search %s: %v\n", box, err)
+				continue
+			}
+			if len(seqNums) == 0 {
+				continue
+			}
+			seq = new(imap.SeqSet)
+			for _, n := range seqNums {
+				seq.AddNum(n)
+			}
+			actionDesc = fmt.Sprintf("%d matching messages", len(seqNums))
+		}
+		if o.dryRun {
+			fmt.Printf("[dry-run] delete in %s: %s\n", box, actionDesc)
+			continue
+		}
+		// Confirmation prompt via Bubble Tea
+		summary := fmt.Sprintf("Mailbox: %s\nAction: delete%s\nRange: %s\nExpunge: %v",
+			box,
+			"",
+			func() string {
+				if since.IsZero() && before.IsZero() {
+					return "all"
+				}
+				if !since.IsZero() && !before.IsZero() {
+					return fmt.Sprintf("%s .. %s", o.startDate, o.endDate)
+				}
+				if !since.IsZero() {
+					return fmt.Sprintf(">= %s", o.startDate)
+				}
+				return fmt.Sprintf("<= %s", o.endDate)
+			}(),
+			o.expunge,
+		)
+		ok, err := runConfirmTUI("Confirm delete", summary)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Println("Cancelled.")
+			continue
+		}
+		if err := dst.Store(seq, imap.AddFlags, []interface{}{imap.DeletedFlag}, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "store %s: %v\n", box, err)
+			continue
+		}
+		if o.expunge {
+			if err := dst.Expunge(nil); err != nil {
+				fmt.Fprintf(os.Stderr, "expunge %s: %v\n", box, err)
+				continue
+			}
+		}
+		if o.expunge {
+			fmt.Printf("Deleted %s in %s (expunged).\n", actionDesc, box)
+		} else {
+			fmt.Printf("Marked %s in %s as \\Deleted (not expunged).\n", actionDesc, box)
+		}
+	}
+	return nil
 }
 
 func runReceive(cmd *cobra.Command, args []string) error {
@@ -833,7 +1277,9 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 	absPath, _ := filepath.Abs(o.mboxPath)
 	stateKey := fmt.Sprintf("mbox:%s|dst:%s", absPath, o.dstMbox)
 	var startOffset int64
-	if !o.ignoreState {
+	// If importing only messages missing Date or with unparseable Date, scan the whole file;
+	// ignore resume state to avoid skipping earlier matches.
+	if !o.ignoreState && !o.mboxOnlyMissingDate && !o.mboxOnlyUnparseableDate {
 		startOffset = st.GetMboxOffset(stateKey)
 	}
 	if startOffset > 0 {
@@ -842,10 +1288,20 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 		}
 	}
 
-	// Count remaining messages quickly from current position
-	total, err := countMboxMessages(f)
-	if err != nil {
-		return err
+	// Count messages for progress
+	var total int
+	if o.mboxOnlyMissingDate || o.mboxOnlyUnparseableDate {
+		// Count only messages that match the selection
+		total, err = countMboxSelected(f, o.mboxOnlyMissingDate, o.mboxOnlyUnparseableDate)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Count remaining messages quickly from current position
+		total, err = countMboxMessages(f)
+		if err != nil {
+			return err
+		}
 	}
 	// reset file
 	if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
@@ -895,20 +1351,105 @@ func runCopyMBOX(cmd *cobra.Command, o *copyOptions) error {
 				return
 			}
 			raw := bldr.String()
+			// Parse headers to determine date
 			var date time.Time
+			var hasDateHeader bool
+			var dateHeaderParsed bool
 			if msg, perr := mail.ReadMessage(strings.NewReader(raw)); perr == nil {
+				// 1) Primary: Date
 				if dh := msg.Header.Get("Date"); dh != "" {
+					hasDateHeader = true
 					if t, per := mail.ParseDate(dh); per == nil {
 						date = t
+						dateHeaderParsed = true
+					} else {
+						// Fallback: detect presence of Date header with a lightweight scan
+						if hasDateHeaderFast(raw) {
+							hasDateHeader = true
+						}
+					}
+				}
+				// 2) Fallbacks if Date missing/unparseable
+				if date.IsZero() {
+					// Resent-Date
+					if v := msg.Header.Get("Resent-Date"); v != "" {
+						if t, per := mail.ParseDate(v); per == nil {
+							date = t
+						}
+					}
+				}
+				if date.IsZero() {
+					// Delivery-date (seen in some MTAs)
+					if v := msg.Header.Get("Delivery-date"); v != "" {
+						if t, per := mail.ParseDate(v); per == nil {
+							date = t
+						}
+					}
+				}
+				if date.IsZero() {
+					// Received: parse the date part after the last ';' and pick the earliest
+					recvs := msg.Header["Received"]
+					var earliest time.Time
+					for _, rv := range recvs {
+						if idx := strings.LastIndex(rv, ";"); idx != -1 {
+							ds := strings.TrimSpace(rv[idx+1:])
+							if t, per := mail.ParseDate(ds); per == nil {
+								if earliest.IsZero() || t.Before(earliest) {
+									earliest = t
+								}
+							}
+						}
+					}
+					if !earliest.IsZero() {
+						date = earliest
 					}
 				}
 			}
+			// Apply filters
+			// Only missing Date: skip any with a Date header
+			if o.mboxOnlyMissingDate && hasDateHeader {
+				if !o.dryRun {
+					endPos, _ := f.Seek(0, io.SeekCurrent)
+					st.SetMboxOffset(stateKey, endPos)
+				}
+				continue
+			}
+			// Only unparseable Date: include only if Date header exists but could not be parsed
+			if o.mboxOnlyUnparseableDate && !(hasDateHeader && !dateHeaderParsed) {
+				// advance state to current position to avoid reprocessing on save below
+				if !o.dryRun {
+					endPos, _ := f.Seek(0, io.SeekCurrent)
+					st.SetMboxOffset(stateKey, endPos)
+				}
+				continue
+			}
 			if date.IsZero() {
+				// As a last resort, use current time
 				date = time.Now()
 			}
+			included := true
+			// Apply selection flags once more to decide inclusion
+			if o.mboxOnlyMissingDate && hasDateHeader {
+				included = false
+			}
+			if o.mboxOnlyUnparseableDate && !(hasDateHeader && date.IsZero()) {
+				// Note: date.IsZero() here indicates Date header was present but not parsed into 'date'
+				included = false
+			}
+
+			if !included {
+				// skip progress increment for excluded messages
+				continue
+			}
+
 			if o.dryRun {
 				if o.verbose {
-					log.Printf("[dry-run] append %s date=%s", o.dstMbox, date.Format(time.RFC3339))
+					log.Printf("[dry-run] append %s date=%s", o.dstMbox, func() string {
+						if date.IsZero() {
+							return "<now>"
+						}
+						return date.Format(time.RFC3339)
+					}())
 				}
 			} else {
 				if _, err := imaputil.SelectMailbox(dst, o.dstMbox, false); err != nil {
@@ -958,6 +1499,86 @@ func countMboxMessages(r io.Reader) (int, error) {
 	return count, nil
 }
 
+// countMboxSelected counts only messages that match selection flags.
+func countMboxSelected(f *os.File, onlyMissingDate, onlyUnparseableDate bool) (int, error) {
+	// Start from current position; caller should have seeked appropriately
+	r := mbox.NewReader(f)
+	count := 0
+	for {
+		mr, err := r.NextMessage()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+		var bldr strings.Builder
+		if _, err := io.Copy(&bldr, mr); err != nil {
+			return 0, err
+		}
+		raw := bldr.String()
+		var hasDateHeader bool
+		var dateHeaderParsed bool
+		if msg, perr := mail.ReadMessage(strings.NewReader(raw)); perr == nil {
+			if dh := msg.Header.Get("Date"); dh != "" {
+				hasDateHeader = true
+				if _, per := mail.ParseDate(dh); per == nil {
+					dateHeaderParsed = true
+				}
+			}
+		} else {
+			if hasDateHeaderFast(raw) {
+				hasDateHeader = true
+			}
+		}
+		include := true
+		if onlyMissingDate && hasDateHeader {
+			include = false
+		}
+		if onlyUnparseableDate && !(hasDateHeader && !dateHeaderParsed) {
+			include = false
+		}
+		if include {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// hasDateHeaderFast scans the header block for a Date: field without full RFC parsing.
+func hasDateHeaderFast(raw string) bool {
+	// Look at the header portion (before first empty line)
+	// Accept both CRLF and LF; lines may be long, but scanning is fine.
+	// We ignore continuations; presence detection only needs the field name line.
+	// Case-insensitive match on "Date:" at line start (allow leading spaces defensively).
+	// Stop at first blank line.
+	for i := 0; i < len(raw); {
+		// find line end
+		j := i
+		for j < len(raw) && raw[j] != '\n' {
+			j++
+		}
+		line := raw[i:j]
+		// Trim CR and leading spaces
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		if trimmed == "" { // blank line ends header
+			break
+		}
+		low := strings.ToLower(trimmed)
+		if strings.HasPrefix(low, "date:") {
+			return true
+		}
+		if j == len(raw) {
+			break
+		}
+		i = j + 1 // next line
+	}
+	return false
+}
+
 // parseMappings converts `src=dst` pairs into a map
 
 func parseMappings(pairs []string) map[string]string {
@@ -974,3 +1595,130 @@ func parseMappings(pairs []string) map[string]string {
 }
 
 // TUI implemented in tui.go
+
+// ========================= ANALYZE-MBOX =========================
+
+type analyzeMboxOptions struct {
+	mboxPath string
+	limit    int // sample lines per category
+}
+
+func addAnalyzeMboxFlags(cmd *cobra.Command) {
+	o := &analyzeMboxOptions{}
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = false
+	cmd.Flags().StringVar(&o.mboxPath, "mbox", "", "Path to MBOX file to analyze")
+	cmd.Flags().IntVar(&o.limit, "limit", 5, "Sample size per category to print")
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		cmd.SetContext(context.WithValue(cmd.Context(), ctxKey{}, o))
+		return nil
+	}
+}
+
+func runAnalyzeMbox(cmd *cobra.Command, args []string) error {
+	o := cmd.Context().Value(ctxKey{}).(*analyzeMboxOptions)
+	if o.mboxPath == "" {
+		return fmt.Errorf("--mbox is required")
+	}
+	f, err := os.Open(o.mboxPath)
+	if err != nil {
+		return fmt.Errorf("open mbox: %w", err)
+	}
+	defer f.Close()
+
+	r := mbox.NewReader(f)
+	type sample struct{ header string }
+	var withDateParsed, withDateUnparsed, withoutDate int
+	withDateParsedSamples := []sample{}
+	withDateUnparsedSamples := []sample{}
+	withoutDateSamples := []sample{}
+
+	for {
+		mr, err := r.NextMessage()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read mbox: %w", err)
+		}
+		// Read only headers quickly (up to first blank line)
+		br := bufio.NewReader(mr)
+		var headerBuf bytes.Buffer
+		for {
+			line, rerr := br.ReadString('\n')
+			if len(line) > 0 {
+				headerBuf.WriteString(line)
+				tl := strings.TrimRight(line, "\r\n")
+				if tl == "" { // end of headers
+					break
+				}
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				return rerr
+			}
+		}
+		hdr := headerBuf.String()
+		var has bool
+		var parsed bool
+		if msg, perr := mail.ReadMessage(strings.NewReader(hdr)); perr == nil {
+			if dh := msg.Header.Get("Date"); dh != "" {
+				has = true
+				if _, per := mail.ParseDate(dh); per == nil {
+					parsed = true
+				}
+			}
+		} else {
+			has = hasDateHeaderFast(hdr)
+			// parsed remains false in fallback
+		}
+		switch {
+		case has && parsed:
+			withDateParsed++
+			if len(withDateParsedSamples) < o.limit {
+				withDateParsedSamples = append(withDateParsedSamples, sample{header: firstHeaderLines(hdr, 10)})
+			}
+		case has && !parsed:
+			withDateUnparsed++
+			if len(withDateUnparsedSamples) < o.limit {
+				withDateUnparsedSamples = append(withDateUnparsedSamples, sample{header: firstHeaderLines(hdr, 10)})
+			}
+		default:
+			withoutDate++
+			if len(withoutDateSamples) < o.limit {
+				withoutDateSamples = append(withoutDateSamples, sample{header: firstHeaderLines(hdr, 10)})
+			}
+		}
+	}
+
+	fmt.Printf("MBOX analyze: %s\n", o.mboxPath)
+	fmt.Printf("  with Date (parsed):     %d\n", withDateParsed)
+	fmt.Printf("  with Date (unparsed):   %d\n", withDateUnparsed)
+	fmt.Printf("  without Date header:    %d\n", withoutDate)
+	fmt.Println()
+	if len(withDateUnparsedSamples) > 0 {
+		fmt.Println("Samples: with Date (unparsed)")
+		for i, s := range withDateUnparsedSamples {
+			fmt.Printf("--- %d ---\n%s\n", i+1, s.header)
+		}
+		fmt.Println()
+	}
+	if len(withoutDateSamples) > 0 {
+		fmt.Println("Samples: without Date header")
+		for i, s := range withoutDateSamples {
+			fmt.Printf("--- %d ---\n%s\n", i+1, s.header)
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
+func firstHeaderLines(hdr string, n int) string {
+	lines := strings.Split(hdr, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>gomap — IMAP copy and utilities</title>
-    <meta name="description" content="gomap is a tiny CLI to copy and receive emails via IMAP or MBOX. Developer-friendly, fast, and scriptable." />
+  <meta name="description" content="gomap is a tiny CLI to copy, import, and back up emails via IMAP or MBOX. Developer-friendly, fast, and scriptable." />
     <meta property="og:title" content="gomap — IMAP copy and utilities" />
     <meta property="og:description" content="Copy email between IMAP servers, import MBOX, and download mail locally. Binaries for Linux/macOS/Windows." />
     <meta property="og:type" content="website" />
@@ -56,7 +56,7 @@
           <p>Import from local <code>mbox</code> files into any destination mailbox.</p>
         </div>
         <div class="feat">
-          <h3>Receive locally</h3>
+          <h3>Backup locally</h3>
           <p>Download mailboxes to files or an <code>mbox</code> per folder, ideal for backups.</p>
         </div>
         <div class="feat">
@@ -117,8 +117,8 @@ make build   # or: go build -o gomap ./cmd/gomap</code><button class="copy" titl
         </div>
         <div class="grid-2">
           <div>
-            <h3>Receive to local folder</h3>
-            <pre class="code"><code>gomap receive \ 
+            <h3>Backup to local folder</h3>
+            <pre class="code"><code>gomap backup \ 
   --src-host imap.example --src-user alice --src-pass-prompt \ 
   --output-dir ./gomap-download --format mbox --since 2024-01-01</code><button class="copy" title="Copy">Copy</button></pre>
           </div>

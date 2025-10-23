@@ -16,6 +16,7 @@ Note: Test with non-production accounts first. Use at your own risk.
 - Dry-run mode
 - Configurable per-folder concurrency
 - Bubble Tea TUI with a single overall progress bar by default, smoothed ETA, and quick cancel (q / Ctrl+C)
+- Diagnostics: analyze MBOX files for Date header presence/parseability
 
 ## Installation
 
@@ -75,6 +76,87 @@ Resume for MBOX imports:
 - Use `--ignore-state` or a fresh `--state-file` to restart from the beginning of the MBOX.
 - If the MBOX file changed (truncated/rotated) after a run, the stored offset may be invalid; restart with `--ignore-state` or a new state file.
 
+Date handling for MBOX imports:
+
+- The tool uses the message's `Date:` header if it can be parsed.
+- If `Date:` is missing/unparseable, it falls back to (in order): `Resent-Date`, `Delivery-date`, then the earliest timestamp parsed from `Received:` headers. As a last resort, it uses the current time.
+- This determines the INTERNALDATE on the destination server during APPEND.
+
+Analyze MBOX (diagnostics):
+
+Use the built-in analyzer to understand how many messages in an MBOX have missing or unparseable `Date:` headers. This helps decide whether to use `--mbox-only-missing-date` or `--mbox-only-unparseable-date` for a targeted re-import.
+
+```
+./gomap analyze-mbox \
+  --mbox /path/to/mail.mbox \
+  --limit 5
+```
+
+The analyzer prints counts for:
+
+- with Date (parsed)
+- with Date (unparsed)
+- without Date header
+
+and shows a few header samples per category (limited by `--limit`).
+
+Only import messages missing/unparseable Date headers:
+
+If you need to re-import only messages that had no parseable `Date:` (for example to correct dates), you can filter with:
+
+```
+./gomap copy \
+  --mbox /path/to/mail.mbox \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --dst-mailbox INBOX \
+  --mbox-only-missing-date
+```
+
+Notes:
+
+- `--mbox-only-missing-date` scans the whole file and ignores the resume offset so earlier messages without `Date:` aren't skipped.
+- Alternatively, use `--mbox-only-unparseable-date` to select messages that have a `Date:` header which cannot be parsed (also ignores resume state).
+
+Fix wrongly dated “today” messages (MBOX import)
+
+If you imported from MBOX and some older emails appear with today’s date (no/invalid `Date:` header in source), you can fix them:
+
+1) Preview which messages would be deleted (dry-run):
+
+```
+./gomap delete \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --mailbox INBOX \
+  --start-date 2025-10-22 --end-date 2025-10-22 \
+  --dry-run
+```
+
+2) Delete and expunge those messages (you’ll get a TUI confirmation):
+
+```
+./gomap delete \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --mailbox INBOX \
+  --start-date 2025-10-22 --end-date 2025-10-22 \
+  --expunge true
+```
+
+3) Re-import only messages without a parseable `Date:` from the MBOX:
+
+```
+./gomap copy \
+  --mbox /path/to/mail.mbox \
+  --dst-host imap.dest.example --dst-user user@dest.example --dst-pass 'app-password-dst' \
+  --dst-mailbox INBOX \
+  --mbox-only-missing-date
+```
+
+Notes:
+
+- Adjust the date in step 1/2 to the day those messages received “today” as INTERNALDATE.
+- `--mbox-only-missing-date` ignores the resume offset to ensure earlier messages without a `Date:` are not skipped.
+- With the improved fallback (Resent-Date/Delivery-date/Received), re-imported messages should land at the correct position chronologically.
+
 You can also prompt for passwords (no echo):
 
 ```
@@ -107,7 +189,7 @@ Behavior notes:
 - Include/Exclude filters and skip-special options apply to IMAP source mode. When using `--mbox`, the filters are not used.
 - In MBOX → IMAP mode, the progress total reflects messages remaining from the current resume offset.
 
-### Receive (IMAP → filesystem)
+### Backup (IMAP → filesystem)
 
 Download messages from a source IMAP account into the local filesystem. Two formats are supported:
 
@@ -118,19 +200,19 @@ Examples:
 
 ```
 # Single-file mode (default)
-./gomap receive \
+./gomap backup \
   --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
   --include '^(INBOX|Archive.*)$' --since 2024-01-01 \
   --output-dir backup
 
 # Mbox mode
-./gomap receive \
+./gomap backup \
   --src-host imap.source.example --src-user user@source.example --src-pass 'app-password-src' \
   --format mbox \
   --output-dir backup
 ```
 
-Flags (receive):
+Flags (backup):
 
 - `--src-host`, `--src-port`, `--src-user`, `--src-pass` (or `--src-pass-prompt`)
 - `--insecure`, `--starttls`
@@ -145,6 +227,64 @@ Behavior:
 - Single-file mode resumes by skipping existing files (UID.eml). Re-running is idempotent.
 - Mbox mode appends raw messages; re-running may duplicate messages unless filtered with `--since` or external dedupe is used.
 - Mailbox-to-path mapping: remote folder names become directories under `--output-dir` (single-file) or `.mbox` file names (mbox mode). Unsafe characters are sanitized to safe path segments.
+
+### Mark-read (set \Seen)
+
+Mark all messages as read in one or multiple mailboxes. Supports date range filters.
+
+Examples:
+
+```
+# INBOX: all messages
+./gomap mark-read \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --mailbox INBOX
+
+# All mailboxes, filtered, date range inclusive
+./gomap mark-read \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --all --include '^(INBOX|Archive.*)$' --exclude '^Spam|^Trash' \
+  --start-date 2024-01-01 --end-date 2024-12-31
+```
+
+Flags:
+
+- `--mailbox` NAME or `--all` with `--include/--exclude` (regex)
+- `--start-date YYYY-MM-DD` (INTERNALDATE >=)
+- `--end-date YYYY-MM-DD` (inclusive; internally BEFORE end+1d)
+- IMAP connection flags: `--dst-host`, `--dst-port`, `--dst-user`, `--dst-pass`, `--dst-pass-prompt`, `--insecure`, `--starttls`
+
+### Delete (with confirmation)
+
+Delete messages in one or multiple mailboxes, optionally restricted by date range. A Bubble Tea confirmation prompt summarizes the action before applying. By default, messages are expunged after marking as `\\Deleted`.
+
+Examples:
+
+```
+# Dry-run preview
+./gomap delete \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --mailbox INBOX --end-date 2023-12-31 --dry-run
+
+# Delete and expunge across mailboxes
+./gomap delete \
+  --dst-host imap.example --dst-user user@example --dst-pass 'app-pass' \
+  --all --exclude '^Spam|^Trash' \
+  --start-date 2020-01-01 --end-date 2022-12-31 \
+  --expunge true
+```
+
+Flags:
+
+- `--mailbox` NAME or `--all` with `--include/--exclude` (regex)
+- `--start-date YYYY-MM-DD`, `--end-date YYYY-MM-DD` (inclusive end)
+- `--dry-run` to preview without changes
+- `--expunge` (default true) to permanently remove after marking `\\Deleted`
+- IMAP connection flags: `--dst-host`, `--dst-port`, `--dst-user`, `--dst-pass`, `--dst-pass-prompt`, `--insecure`, `--starttls`
+
+Safety:
+
+- A TUI confirmation dialog summarizes mailbox, range and options. Confirm with `y`, cancel with `n`.
 
 ### Send (SMTP)
 
@@ -184,6 +324,10 @@ Security (SMTP):
 - Rate limits: some providers throttle parallel access. Reduce `--concurrency` if needed.
 - STARTTLS vs TLS: use `--starttls` for port 143; use implicit TLS for 993.
 
+Debugging:
+
+- IMAP wire log: set environment variable `GOMAP_IMAP_DEBUG=1` to print raw IMAP protocol traffic to stderr (useful for diagnosing server responses).
+
 Security:
 
 - CLI passwords can show up in `ps` or shell history. Prefer `--src-pass-prompt`/`--dst-pass-prompt` on shared systems.
@@ -216,7 +360,7 @@ Notes:
 - `mail_max_uid`: A message is considered for copy if it matches the date filter and its UID is greater than the stored value (unless `--ignore-state`).
 - `mbox_offsets`: Offset is in bytes from the start of the MBOX file. Re-runs continue from that position. Use `--ignore-state` or a fresh `--state-file` to start from the beginning.
 - If an MBOX file was truncated or rotated after a run, the stored offset may be invalid—restart with `--ignore-state` or delete the entry.
-- Receive command does not use the state file: single-file mode resumes by skipping existing `UID.eml`; receive mbox mode appends and may duplicate on re-runs unless you constrain with `--since`.
+- Backup command does not use the state file: single-file mode resumes by skipping existing `UID.eml`; backup mbox mode appends and may duplicate on re-runs unless you constrain with `--since`.
 
 ## License
 
