@@ -12,7 +12,7 @@ import (
 
 	"math"
 
-	"github.com/yourname/gomap/internal/syncer"
+	"github.com/pepperpark/gomap/internal/syncer"
 )
 
 type mailboxProgress struct {

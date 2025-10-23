@@ -22,9 +22,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/emersion/go-mbox"
-	"github.com/yourname/gomap/internal/imaputil"
-	"github.com/yourname/gomap/internal/state"
-	"github.com/yourname/gomap/internal/syncer"
+	"github.com/pepperpark/gomap/internal/imaputil"
+	"github.com/pepperpark/gomap/internal/state"
+	"github.com/pepperpark/gomap/internal/syncer"
 )
 
 var (

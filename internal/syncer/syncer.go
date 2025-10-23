@@ -11,8 +11,8 @@ import (
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
 
-	"github.com/yourname/gomap/internal/imaputil"
-	"github.com/yourname/gomap/internal/state"
+	"github.com/pepperpark/gomap/internal/imaputil"
+	"github.com/pepperpark/gomap/internal/state"
 )
 
 // no init needed
