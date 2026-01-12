@@ -1,0 +1,18 @@
+gomap (0.0.6-1ubuntu1) jammy; urgency=medium
+
+  [ Steve R. ]
+  * Rename 'receive' command to 'backup' and add 'mark-read' and 'delete' commands with confirmation TUI (#6)
+
+  [ pepperpark ]
+  * Remove deprecated imap-sync command and TUI; functionality moved to cmd/gomap
+  * Update module path to match repository name
+  * Update import paths to reflect the correct repository name
+  * Add installation instructions for Ubuntu and Go, and improve copy-to-clipboard functionality
+
+ -- Steve Rakebrandt <0@0x00.dev>  Thu, 23 Oct 2025 16:26:12 +0200
+
+gomap (0.0.6-1) jammy; urgency=medium
+
+  * Release v0.0.6
+
+ -- Steve Rakebrandt <0@0x00.dev>  Thu, 23 Oct 2025 16:26:12 +0200

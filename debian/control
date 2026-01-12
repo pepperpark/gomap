@@ -1,0 +1,13 @@
+Source: gomap
+Section: utils
+Priority: optional
+Maintainer: Steve Rakebrandt <0@00x0.dev>
+Build-Depends: debhelper (>= 11), dh-golang, golang-any
+Standards-Version: 4.1.4
+Rules-Requires-Root: no
+
+Package: gomap
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: IMAP CLI to copy, send and receive messages
+ A small CLI tool written in Go to work with IMAP.
