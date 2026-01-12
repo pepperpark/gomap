@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-imap"
@@ -49,6 +50,7 @@ func ListMailboxes(ctx context.Context, c *client.Client) ([]string, error) {
 	mailboxes := []string{}
 	ch := make(chan *imap.MailboxInfo, 32)
 	done := make(chan error, 1)
+	hasInbox := false
 	go func() {
 		done <- c.List("", "*", ch)
 		close(done)
@@ -56,10 +58,16 @@ func ListMailboxes(ctx context.Context, c *client.Client) ([]string, error) {
 	for m := range ch {
 		if m != nil {
 			mailboxes = append(mailboxes, m.Name)
+			if strings.EqualFold(m.Name, "INBOX") {
+				hasInbox = true
+			}
 		}
 	}
 	if err := <-done; err != nil {
 		return nil, err
+	}
+	if !hasInbox {
+		mailboxes = append(mailboxes, "INBOX")
 	}
 	return mailboxes, nil
 }

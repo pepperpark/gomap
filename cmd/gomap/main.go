@@ -758,7 +758,11 @@ func runReceive(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("connect source: %w", err)
 	}
-	defer src.Logout()
+	defer func() {
+		if src != nil {
+			_ = src.Logout()
+		}
+	}()
 
 	boxes, err := imaputil.ListMailboxes(ctx, src)
 	if err != nil {
@@ -801,24 +805,90 @@ func runReceive(cmd *cobra.Command, args []string) error {
 		fmt.Println("No mailboxes to download.")
 		return nil
 	}
+	if o.verbose {
+		log.Printf("Mailboxes to download (%d): %s", len(filtered), strings.Join(filtered, ", "))
+	}
 
 	for _, box := range filtered {
-		if err := downloadMailbox(src, box, sinceTime, o); err != nil {
+		if o.verbose {
+			log.Printf("[%s] scanning", box)
+		}
+		if err := downloadMailbox(ctx, &src, box, sinceTime, o); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] error: %v\n", box, err)
 		}
 	}
 	return nil
 }
 
-func downloadMailbox(src *client.Client, box string, since time.Time, o *receiveOptions) error {
-	// Select mailbox
-	if _, err := imaputil.SelectMailbox(src, box, true); err != nil {
-		return err
+func isConnClosed(err error) bool {
+	if err == nil {
+		return false
 	}
-	// Search UIDs
-	uids, err := imaputil.SearchUIDsSince(src, since, 0)
+	msg := err.Error()
+	return strings.Contains(msg, "imap: connection closed") ||
+		strings.Contains(msg, "connection closed during command execution") ||
+		strings.Contains(msg, "unexpected EOF")
+}
+
+func reconnectSrc(ctx context.Context, src **client.Client, o *receiveOptions) error {
+	if *src != nil {
+		_ = (*src).Logout()
+	}
+	tlsConfig := &tls.Config{InsecureSkipVerify: o.insecure}
+	newClient, err := imaputil.DialAndLogin(ctx, o.srcHost, o.srcPort, o.srcUser, o.srcPass, o.startTLS, tlsConfig)
 	if err != nil {
 		return err
+	}
+	*src = newClient
+	return nil
+}
+
+func downloadMailbox(ctx context.Context, src **client.Client, box string, since time.Time, o *receiveOptions) error {
+	const fetchBatchSize = 500
+	const maxReconnectAttempts = 3
+
+	selectMailbox := func() error {
+		_, err := imaputil.SelectMailbox(*src, box, true)
+		return err
+	}
+	reconnectAndSelect := func() error {
+		for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
+			if o.verbose {
+				log.Printf("[%s] connection closed, reconnecting (%d/%d)", box, attempt, maxReconnectAttempts)
+			}
+			if err := reconnectSrc(ctx, src, o); err != nil {
+				return err
+			}
+			if err := selectMailbox(); err == nil {
+				return nil
+			} else if !isConnClosed(err) {
+				return err
+			}
+		}
+		return fmt.Errorf("reconnect failed after %d attempts", maxReconnectAttempts)
+	}
+
+	// Select mailbox
+	if err := selectMailbox(); err != nil {
+		if !isConnClosed(err) {
+			return err
+		}
+		if err := reconnectAndSelect(); err != nil {
+			return err
+		}
+	}
+	// Search UIDs
+	uids, err := imaputil.SearchUIDsSince(*src, since, 0)
+	if err != nil {
+		if isConnClosed(err) {
+			if err := reconnectAndSelect(); err != nil {
+				return err
+			}
+			uids, err = imaputil.SearchUIDsSince(*src, since, 0)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	if len(uids) == 0 {
 		if o.verbose {
@@ -840,18 +910,8 @@ func downloadMailbox(src *client.Client, box string, since time.Time, o *receive
 		}
 	}
 
-	// Build seq set
 	section := &imap.BodySectionName{}
 	items := []imap.FetchItem{section.FetchItem(), imap.FetchInternalDate, imap.FetchUid}
-	seq := new(imap.SeqSet)
-	for _, uid := range uids {
-		seq.AddNum(uid)
-	}
-	msgs := make(chan *imap.Message, 64)
-	go func() {
-		_ = src.UidFetch(seq, items, msgs)
-		close(msgs)
-	}()
 
 	var mboxFile *os.File
 	var mboxPath string
@@ -868,46 +928,92 @@ func downloadMailbox(src *client.Client, box string, since time.Time, o *receive
 	}
 
 	count := 0
-	for msg := range msgs {
-		if msg == nil {
-			continue
+	fetchBatch := func(batch []uint32) error {
+		seq := new(imap.SeqSet)
+		for _, uid := range batch {
+			seq.AddNum(uid)
 		}
-		uid := msg.Uid
-		r := msg.GetBody(section)
-		if r == nil {
-			continue
-		}
-		// Read whole message
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, r); err != nil {
-			return err
-		}
-		raw := buf.Bytes()
-		if o.format == "single-file" {
-			outPath := filepath.Join(base, fmt.Sprintf("%d.eml", uid))
-			// resume: skip if exists
-			if _, err := os.Stat(outPath); err == nil {
-				if o.verbose {
-					log.Printf("[%s] skip existing %s", box, outPath)
-				}
+		msgs := make(chan *imap.Message, 64)
+		fetchDone := make(chan error, 1)
+		go func() {
+			fetchDone <- (*src).UidFetch(seq, items, msgs)
+		}()
+
+		var firstErr error
+		for msg := range msgs {
+			if firstErr != nil {
 				continue
 			}
-			if err := os.WriteFile(outPath, raw, 0o644); err != nil {
+			if msg == nil {
+				continue
+			}
+			uid := msg.Uid
+			r := msg.GetBody(section)
+			if r == nil {
+				continue
+			}
+			// Read whole message
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, r); err != nil {
+				firstErr = err
+				continue
+			}
+			raw := buf.Bytes()
+			if o.format == "single-file" {
+				outPath := filepath.Join(base, fmt.Sprintf("%d.eml", uid))
+				// resume: skip if exists
+				if _, err := os.Stat(outPath); err == nil {
+					if o.verbose {
+						log.Printf("[%s] skip existing %s", box, outPath)
+					}
+					continue
+				}
+				if err := os.WriteFile(outPath, raw, 0o644); err != nil {
+					firstErr = err
+					continue
+				}
+				if o.verbose {
+					log.Printf("[%s] wrote %s", box, outPath)
+				}
+			} else {
+				date := msg.InternalDate
+				if date.IsZero() {
+					date = time.Now()
+				}
+				if err := appendToMbox(mboxFile, raw, date); err != nil {
+					firstErr = fmt.Errorf("append to mbox: %w", err)
+					continue
+				}
+			}
+			count++
+		}
+		if err := <-fetchDone; err != nil && firstErr == nil {
+			firstErr = err
+		}
+		return firstErr
+	}
+
+	for start := 0; start < len(uids); start += fetchBatchSize {
+		end := start + fetchBatchSize
+		if end > len(uids) {
+			end = len(uids)
+		}
+		batch := uids[start:end]
+		for attempt := 1; ; attempt++ {
+			err := fetchBatch(batch)
+			if err == nil {
+				break
+			}
+			if !isConnClosed(err) {
 				return err
 			}
-			if o.verbose {
-				log.Printf("[%s] wrote %s", box, outPath)
+			if attempt >= maxReconnectAttempts {
+				return err
 			}
-		} else {
-			date := msg.InternalDate
-			if date.IsZero() {
-				date = time.Now()
-			}
-			if err := appendToMbox(mboxFile, raw, date); err != nil {
-				return fmt.Errorf("append to mbox: %w", err)
+			if err := reconnectAndSelect(); err != nil {
+				return err
 			}
 		}
-		count++
 	}
 	if o.verbose {
 		if o.format == "mbox" {
